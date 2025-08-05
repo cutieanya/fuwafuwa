@@ -1,52 +1,59 @@
 import 'package:flutter/material.dart';
-
-// このコードを class ChatListScreen extends StatelessWidget { のすぐ上に追加
+import 'chat_screen.dart';
 
 // Chatクラスの設計図を元に、仮のデータリストを作成
 final List<Chat> dummyChatList = [
   Chat(
+    threadId: '0',
     name: 'cutieanya',
     lastMessage: '今日の進捗どう？',
     time: '18:30',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '1',
     name: '田中さん',
     lastMessage: '例の件、承知しました。',
     time: '17:02',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '2',
     name: 'Flutter大好きクラブ',
     lastMessage: '次の勉強会は来週です！',
     time: '昨日',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '3',
     name: '門田',
     lastMessage: 'すずはです',
     time: '昨日',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '4',
     name: 'みき',
     lastMessage: '中田です',
     time: '昨日',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '5',
     name: 'ほのか',
     lastMessage: 'ほのかです',
     time: '昨日',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '6',
     name: '森コ',
     lastMessage: 'もりこです',
     time: '昨日',
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
   Chat(
+    threadId: '7',
     name: 'mndns232',
     lastMessage: 'もりこです',
     time: '昨日',
@@ -86,7 +93,13 @@ class ChatListScreen extends StatelessWidget {
             subtitle: Text(chat.lastMessage), // データからメッセージを取得
             trailing: Text(chat.time), // データから時間を取得
             onTap: () {
-              print('${chat.name} was tapped');
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  // ChatScreenを呼び出し、タップされたチャットの名前(chat.name)を渡す
+                  builder: (context) => ChatScreen(threadId: chat.threadId),
+                ),
+              );
             },
           );
         },
@@ -98,6 +111,7 @@ class ChatListScreen extends StatelessWidget {
 // このコードをchat_list_screen.dartの一番下に追加
 
 class Chat {
+  final String threadId;
   final String name; // 相手の名前
   final String lastMessage; // 最後のメッセージ
   final String time; // 時間
@@ -105,6 +119,7 @@ class Chat {
 
   // 設計図から実体を作るための部品
   Chat({
+    required this.threadId,
     required this.name,
     required this.lastMessage,
     required this.time,
