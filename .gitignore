@@ -1,7 +1,59 @@
-# Default ignored files
-/shelf/
-/.idea/workspace.xml
-# IDE files
-.idea/
-/build/
+# Flutter/Dartの自動生成ファイル
 .dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# ビルド成果物
+build/
+
+# IDEやエディタの設定ファイル
+.idea/
+*.iml
+.vscode/
+
+# プラットフォーム固有のファイル
+# Android
+/android/.gradle/
+/android/local.properties
+
+# iOS
+/ios/Pods/
+/ios/Podfile.lock
+/ios/.symlinks/
+/ios/Runner/GeneratedPluginRegistrant.h
+/ios/Runner/GeneratedPluginRegistrant.m
+/ios/Runner.xcworkspace/
+/ios/Runner.xcodeproj/project.xcworkspace/
+/ios/Runner.xcodeproj/xcuserdata/
+
+# macOS
+/macos/Pods/
+/macos/Podfile.lock
+/macos/.symlinks/
+/macos/Flutter/ephemeral/
+
+# Web
+# (Web用のビルド成果物はルートのbuild/に含まれるため、通常は個別指定不要)
+
+# Windows
+/windows/flutter/ephemeral/
+/windows/runner/Debug/
+/windows/runner/Profile/
+/windows/runner/Release/
+
+# Linux
+/linux/flutter/ephemeral/
+
+# テスト関連
+coverage/
+
+# ログファイル
+*.log
+
+# ★★★ 特に重要：秘密情報ファイル ★★★
+# APIキーやパスワードなど、絶対にGitに含めてはいけないファイル
+# 実際のファイル名に合わせてください。
+# 例：
+# lib/secrets.dart
+# .env
