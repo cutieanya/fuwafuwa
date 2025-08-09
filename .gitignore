@@ -12,6 +12,10 @@ build/
 *.iml
 .vscode/
 
+# 補助ツールの依存関係ファイル
+# (Node.js/npmを補助的に使う場合)
+node_modules/
+
 # プラットフォーム固有のファイル
 # Android
 /android/.gradle/
@@ -51,9 +55,20 @@ coverage/
 # ログファイル
 *.log
 
+# OS固有の自動生成ファイル
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+desktop.ini
+
+
 # ★★★ 特に重要：秘密情報ファイル ★★★
-# APIキーやパスワードなど、絶対にGitに含めてはいけないファイル
-# 実際のファイル名に合わせてください。
-# 例：
+# .envファイル自体と、.env.developmentなど派生ファイルは無視
+.env
+.env.*
+# ただし、テンプレートファイルは無視しない（Git管理に含める）
+!/.env.example
+
+# 実際のファイル名に合わせてください。例：
 # lib/secrets.dart
-# .env
