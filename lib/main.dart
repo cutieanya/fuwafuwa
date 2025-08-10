@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'chat_list_screen.dart'; // 作成したファイルをインポート
+// firebase firebaseCoreプラグインと以前に生成した構成ファイルをインポート
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
