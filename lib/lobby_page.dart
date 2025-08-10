@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fuwafuwa/chat_list_screen.dart';
 import 'package:fuwafuwa/sign_up_page.dart';
 
 class LobbyPage extends StatelessWidget {
@@ -28,6 +29,16 @@ class LobbyPage extends StatelessWidget {
               );
             },
             child: const Text('ログイン'),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ChatListScreen()),
+              );
+            },
+            child: const Text('チャット画面に遷移'),
           ),
         ],
       ),
