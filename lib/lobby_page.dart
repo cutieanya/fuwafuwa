@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fuwafuwa/chat_list_screen.dart';
 import 'package:fuwafuwa/sign_up_page.dart';
+import 'package:fuwafuwa/google_sign_in_page.dart';
 
 class LobbyPage extends StatelessWidget {
   const LobbyPage({super.key});
@@ -39,6 +40,16 @@ class LobbyPage extends StatelessWidget {
               );
             },
             child: const Text('チャット画面に遷移'),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SignInTest()),
+              );
+            },
+            child: const Text('Googleでログイン'),
           ),
         ],
       ),
