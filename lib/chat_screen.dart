@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'chat_bubble.dart';
-
-/// チャット画面（スレッドごと）
+import 'chat_bubble.dart'; // 吹き出し（チャットメッセージ）のカスタムウィジェット
+// チャット画面のステートフルウィジェット
 class ChatScreen extends StatefulWidget {
-  final String threadId; // スレッドID（ダミーデータの分岐に使用）
+  final String threadId; // スレッド（会話）ID
   const ChatScreen({super.key, required this.threadId});
 
   @override
@@ -11,221 +10,137 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  /// 画面内で使うメッセージ配列（最小構成）
-  /// { text: String, time: DateTime, isMe: bool }
+  // メッセージを保持するリスト（text・time・isMeで構成）
   final List<Map<String, dynamic>> _messages = [];
 
-  /// 入力欄
+  // 入力欄のコントローラ
   final TextEditingController _controller = TextEditingController();
-
-  /// メッセージリストのスクロール制御（送信後に最下部へ移動させる）
-  final ScrollController _scrollCtrl = ScrollController();
-
-  /// 入力有無で送信ボタンの有効/無効を切り替える
-  bool _hasText = false;
 
   @override
   void initState() {
     super.initState();
 
-    // ---- ダミーの初期メッセージ（スレッドIDごとに1通だけ） ----
-    final seedByThread = <String, String>{
-      '0': '今日の進捗どう？',
-      '1': '例の件、承知しました。',
-      '2': '次の勉強会は来週です！',
-      '3': 'すずはです',
-      '4': '中田です',
-      '5': 'ほのかです',
-      '6': 'もりこです',
-      '7': 'もりこです',
-    };
-    final seedText = seedByThread[widget.threadId];
-    if (seedText != null) {
-      _messages.add({
-        'text': seedText,
-        'time': DateTime(2024, 8, 7, 17, 2),
-        'isMe': false,
-      });
+    // スレッドIDに応じた初期メッセージ（ダミー）をセットしてる
+    if (widget.threadId == '0') {
+      _messages.addAll([
+        {'text': '今日の進捗どう？', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
+    } else if (widget.threadId == '1') {
+      _messages.addAll([
+        {'text': '例の件、承知しました。', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
+    } else if (widget.threadId == '2') {
+      _messages.addAll([
+        {'text': '次の勉強会は来週です！', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
+    } else if (widget.threadId == '3') {
+      _messages.addAll([
+        {'text': 'すずはです', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
+    } else if (widget.threadId == '4') {
+      _messages.addAll([
+        {'text': '中田です', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
+    } else if (widget.threadId == '5') {
+      _messages.addAll([
+        {'text': 'ほのかです', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
+    } else if (widget.threadId == '6' || widget.threadId == '7') {
+      _messages.addAll([
+        {'text': 'もりこです', 'time': DateTime(2024, 8, 7, 17, 2), 'isMe': false},
+      ]);
     }
-    // ---- ここまで初期メッセージ ----
-
-    // 入力欄のテキスト変化で送信ボタンの活性状態を更新
-    _controller.addListener(() {
-      final has = _controller.text.trim().isNotEmpty;
-      if (has != _hasText) setState(() => _hasText = has);
-    });
-
-    // 初回レンダー完了後、最下部へスクロール（古い履歴がある想定）
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(animate: false));
   }
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  /// 送信処理：メッセージ配列に追加→入力欄クリア→最下部へスクロール
+  // 送信ボタンを押したときの処理
   void _handleSend() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (_controller.text.trim().isEmpty) return;
 
     setState(() {
-      _messages.add({'text': text, 'time': DateTime.now(), 'isMe': true});
-      _controller.clear();
+      _messages.add({
+        'text': _controller.text.trim(),     // 入力内容
+        'time': DateTime.now(),              // 現在時刻
+        'isMe': true,                        // 自分が送信したメッセージ
+      });
+      _controller.clear(); // 入力欄をクリア
     });
-
-    // レイアウト更新後にスクロール（直後だと位置が確定していないことがある）
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-  }
-
-  /// 最下部へスクロール（Web/デスクトップでも安定するよう軽く待つ）
-  Future<void> _scrollToBottom({bool animate = true}) async {
-    if (!_scrollCtrl.hasClients) return;
-    await Future.delayed(const Duration(milliseconds: 16)); // 1フレーム待機
-    if (!_scrollCtrl.hasClients) return;
-
-    final pos = _scrollCtrl.position.maxScrollExtent;
-    if (animate) {
-      try {
-        await _scrollCtrl.animateTo(
-          pos,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-        );
-      } catch (_) {
-        _scrollCtrl.jumpTo(pos);
-      }
-    } else {
-      _scrollCtrl.jumpTo(pos);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    // 表示用：時刻の古い順に並べ替え（リスト本体は触らない）
-    final sortedMessages = [..._messages]
-      ..sort((a, b) => (a['time'] as DateTime).compareTo(b['time'] as DateTime));
+    // 日時順にメッセージをソート（昇順）
+    final sortedMessages = [..._messages]..sort((a, b) {
+      final aTime = a['time'] as DateTime;
+      final bTime = b['time'] as DateTime;
+      return aTime.compareTo(bTime);
+    });
 
     return Scaffold(
-      // 画面の地色（明るめ）
-      backgroundColor: cs.surface,
-
-      // 上部バーは一段濃いトーンにして背景と差別化
       appBar: AppBar(
-        title: Text('スレッド ${widget.threadId}'),
-        centerTitle: true,
-        backgroundColor: cs.surfaceContainerHighest, // ← 濃い面
-        foregroundColor: cs.onSurface,               // ← 文字/アイコン色
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        shadowColor: Colors.transparent,
+        title: Text('スレッド ${widget.threadId}'), // スレッドIDをタイトルに表示
       ),
-
       body: Column(
         children: [
-          // ---- メッセージリスト（上から下へ時系列） ----
+          // メッセージ表示エリア（上下にスクロール可能）
           Expanded(
             child: ListView.builder(
-              controller: _scrollCtrl,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.all(16),
               itemCount: sortedMessages.length,
               itemBuilder: (context, index) {
-                final msg  = sortedMessages[index];
-                final prev = index > 0 ? sortedMessages[index - 1] : null;
-                final next = index < sortedMessages.length - 1
-                    ? sortedMessages[index + 1]
-                    : null;
-
-                // 同じ送信者&同じ“分”であれば、最後の1件だけ時刻を表示
-                final showTime = next == null ||
-                    next['isMe'] != msg['isMe'] ||
-                    !_isSameMinute(next['time'] as DateTime, msg['time'] as DateTime);
-
-                // 連投の間隔（上側／下側）を詰めるためのフラグ
-                final compactWithPrev = prev != null &&
-                    prev['isMe'] == msg['isMe'] &&
-                    _isSameMinute(prev['time'] as DateTime, msg['time'] as DateTime);
-
-                final compactWithNext = next != null &&
-                    next['isMe'] == msg['isMe'] &&
-                    _isSameMinute(next['time'] as DateTime, msg['time'] as DateTime);
-
+                final msg = sortedMessages[index];
                 return ChatBubble(
-                  text: msg['text'] as String,
-                  time: msg['time'] as DateTime,
-                  isMe: msg['isMe'] as bool,
-                  showTime: showTime,            // ← 最後だけ時刻
-                  compact: compactWithPrev,      // ← 上を詰める
-                  compactBelow: compactWithNext, // ← 下を詰める
+                  text: msg['text'] as String,       // 本文
+                  time: msg['time'] as DateTime,     // 時刻
+                  isMe: msg['isMe'] as bool,         // 送信者かどうか
                 );
               },
             ),
           ),
 
-          // ---- 入力コンポーザー（添付ボタン + テキスト + 送信）----
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-              child: Row(
-                children: [
-                  // 未来の添付用プレースホルダー
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.add_circle_outline),
-                    tooltip: 'Add',
-                  ),
-                  // 入力欄（丸く・やや濃い面の上）
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(24),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: TextField(
-                        controller: _controller,
-                        keyboardType: TextInputType.multiline,
-                        textInputAction: TextInputAction.newline,
-                        minLines: 1,
-                        maxLines: 5,
-                        decoration: const InputDecoration(
-                          hintText: 'メッセージを入力',
-                          border: InputBorder.none,
+          // 入力欄と送信ボタン
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                // 入力欄（角丸デザイン＋影付き）
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black12,
+                          blurRadius: 4,
+                          offset: Offset(1, 1),
                         ),
+                      ],
+                    ),
+                    child: TextField(
+                      controller: _controller,
+                      keyboardType: TextInputType.multiline, // 複数行入力を有効に
+                      textInputAction: TextInputAction.newline,
+                      minLines: 1, // 最小1行
+                      maxLines: 5, // 最大5行まで → 超えたらTextField内でスクロール
+                      decoration: InputDecoration(
+                        hintText: 'メッセージを入力',
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  // 送信ボタン（入力ありで有効）
-                  AnimatedScale(
-                    scale: _hasText ? 1.0 : 0.95,
-                    duration: const Duration(milliseconds: 120),
-                    child: FloatingActionButton.small(
-                      onPressed: _hasText ? _handleSend : null,
-                      child: const Icon(Icons.send_rounded),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 8),
+                // 送信ボタン（紙飛行機アイコン）
+                IconButton(
+                  icon: const Icon(Icons.send),
+                  onPressed: _handleSend,
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
-  }
-
-  /// “同じ分かどうか”だけを見て連投判定に使う（例：02:37 と 02:37 は同一）
-  bool _isSameMinute(DateTime a, DateTime b) {
-    return a.year == b.year &&
-        a.month == b.month &&
-        a.day == b.day &&
-        a.hour == b.hour &&
-        a.minute == b.minute;
   }
 }
