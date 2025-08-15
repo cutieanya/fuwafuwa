@@ -14,30 +14,6 @@
       },
       "oauth_client": [
         {
-          "client_id": "524871713161-bk6f19tn800lp5te86gvusvafob6s95d.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.fuwafuwa",
-            "certificate_hash": "8d6469cb1c6e95d1b93afa40510a43d16e8507f4"
-          }
-        },
-        {
-          "client_id": "524871713161-ld31u43i0s87n460nckbe6ste8hnlhk3.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.fuwafuwa",
-            "certificate_hash": "1d559120713d10fdbbcfc272bb71225c44082eb5"
-          }
-        },
-        {
-          "client_id": "524871713161-s6k4j3q70ap0kb3kcs09kodci4ai04g5.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.fuwafuwa",
-            "certificate_hash": "e984b1478675f390582034a571ca4e7cc1dd3584"
-          }
-        },
-        {
           "client_id": "524871713161-vdglgtc1r1tgvjnogsjk2l8v888tdqle.apps.googleusercontent.com",
           "client_type": 3
         }
@@ -55,10 +31,10 @@
               "client_type": 3
             },
             {
-              "client_id": "524871713161-vlo1mbg9lj63a9j9vfenbf6rv8ugiohg.apps.googleusercontent.com",
+              "client_id": "524871713161-v0vsheg4rhtb3cuupi5t8q5htev133nr.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.example.fuwafuwa"
+                "bundle_id": "com.company.fuwafuwa"
               }
             }
           ]
