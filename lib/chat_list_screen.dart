@@ -60,7 +60,6 @@ final List<Chat> dummyChatList = [
     avatarUrl: 'https://placehold.jp/150x150.png',
   ),
 ];
-
 // チャット一覧画面のWidget
 class ChatListScreen extends StatelessWidget {
   // コンストラクタ（おまじないのようなもの）
