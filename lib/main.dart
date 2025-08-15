@@ -1,12 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:fuwafuwa/lobby_page.dart';
-// firebase firebaseCoreプラグインと以前に生成した構成ファイルをインポート
-import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
+import 'chat_list_screen.dart'; // 作成したファイルをインポート
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+void main() {
   runApp(const MyApp());
 }
 
@@ -22,7 +17,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       // 最初に表示する画面として、さっき作ったChatListScreenを指定
-      home: const LobbyPage(),
+      home: const ChatListScreen(),
     );
   }
 }
