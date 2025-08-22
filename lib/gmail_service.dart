@@ -2,129 +2,130 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
 
-/// Gmail API を手軽に使うための薄いラッパ
-/// - 認証は google_sign_in(v5.4.4) でユーザー承認→アクセストークン取得
-/// - スコープは readonly のまま（送信/削除は不可）。必要なら適宜追加してください。
 class GmailService {
   final GoogleSignIn _gsi = GoogleSignIn(
     scopes: <String>[
       'email',
       'profile',
       'https://www.googleapis.com/auth/gmail.readonly',
-      // 例: 'https://www.googleapis.com/auth/gmail.modify',
-      // 例: 'https://www.googleapis.com/auth/gmail.send',
     ],
   );
 
   static const _base = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
-  /// 現在のユーザーのアクセストークンを取得
-  Future<String?> getAccessToken() async {
-    final GoogleSignInAccount? account =
-        await _gsi.signInSilently() ?? await _gsi.signIn();
+  Future<String?> _token() async {
+    final account = await _gsi.signInSilently() ?? await _gsi.signIn();
     if (account == null) return null;
-    final GoogleSignInAuthentication auth = await account.authentication;
+    final auth = await account.authentication;
     return auth.accessToken;
   }
 
-  /// 共通 GET ヘルパ
-  Future<Map<String, dynamic>> _getJson(Uri uri) async {
-    final token = await getAccessToken();
-    if (token == null) {
-      throw StateError('Not signed in');
-    }
-    final res = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+  // --- 1件のメッセージから From/Date/snippet を抽出 ---
+  Future<Map<String, dynamic>> _getMessageSummary(String messageId) async {
+    final t = await _token();
+    if (t == null) return {};
+
+    final uri = Uri.parse(
+      '$_base/messages/$messageId'
+      '?format=metadata'
+      '&metadataHeaders=From'
+      '&metadataHeaders=Date',
+    );
+    final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
     if (res.statusCode != 200) {
-      throw Exception('GET ${uri.path} failed: ${res.statusCode} ${res.body}');
+      throw Exception('getMessage failed: ${res.statusCode} ${res.body}');
     }
-    return json.decode(res.body) as Map<String, dynamic>;
-  }
+    final data = json.decode(res.body) as Map<String, dynamic>;
 
-  /// メッセージ一覧（IDとsnippet）
-  Future<List<Map<String, String>>> listMessages({
-    String? q,
-    int maxResults = 20,
-    String? pageToken,
-  }) async {
-    final params = <String, String>{
-      'maxResults': '$maxResults',
-      if (q != null && q.isNotEmpty) 'q': q,
-      if (pageToken != null) 'pageToken': pageToken,
-    };
-    final uri = Uri.parse('$_base/messages').replace(queryParameters: params);
-    final data = await _getJson(uri);
-    final List msgs = (data['messages'] as List?) ?? [];
-    // 各IDのsnippetを個別取得（必要最低限）
-    final results = <Map<String, String>>[];
-    for (final m in msgs) {
-      final id = m['id'] as String;
-      final full = await getMessage(id, format: 'metadata');
-      results.add({'id': id, 'snippet': full['snippet'] as String? ?? ''});
+    // internalDate はエポックms
+    final internalMs = int.tryParse('${data['internalDate'] ?? ''}');
+    final date = internalMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(internalMs, isUtc: true).toLocal()
+        : null;
+
+    // ヘッダをMap化
+    String? from;
+    final headers = (data['payload']?['headers'] as List? ?? [])
+        .cast<Map<String, dynamic>>();
+    for (final h in headers) {
+      final name = (h['name'] ?? '').toString().toLowerCase();
+      final value = (h['value'] ?? '').toString();
+      if (name == 'from') from = value;
     }
-    return results;
-  }
 
-  /// メッセージ1件取得
-  /// format: 'full' | 'metadata' | 'minimal' | 'raw'
-  Future<Map<String, dynamic>> getMessage(String id, {String format = 'full'}) async {
-    final uri = Uri.parse('$_base/messages/$id').replace(queryParameters: {'format': format});
-    return _getJson(uri);
+    // From をシンプルに抽出
+String fromName = '(unknown)';
+if (from != null && from.isNotEmpty) {
+  final emailMatch = RegExp(r'^(.*)<(.+)>$').firstMatch(from);
+  if (emailMatch != null) {
+    fromName = emailMatch.group(1)?.trim() ?? emailMatch.group(2)!;
+  } else {
+    fromName = from!;
   }
-
-  /// スレッド一覧（idとsnippet）
-  Future<List<Map<String, String>>> listThreads({
-    String? q,
-    int maxResults = 20,
-    String? pageToken,
-  }) async {
-    final params = <String, String>{
-      'maxResults': '$maxResults',
-      if (q != null && q.isNotEmpty) 'q': q,
-      if (pageToken != null) 'pageToken': pageToken,
-    };
-    final uri = Uri.parse('$_base/threads').replace(queryParameters: params);
-    final data = await _getJson(uri);
-    final List ths = (data['threads'] as List?) ?? [];
-    final results = <Map<String, String>>[];
-    for (final t in ths) {
-      final id = t['id'] as String;
-      final thr = await getThread(id, format: 'metadata');
-      final snippet = thr['messages']?[0]?['snippet'] as String? ?? '';
-      results.add({'id': id, 'snippet': snippet});
-    }
-    return results;
-  }
-
-  /// スレッド1件取得
-  Future<Map<String, dynamic>> getThread(String id, {String format = 'full'}) async {
-    final uri = Uri.parse('$_base/threads/$id').replace(queryParameters: {'format': format});
-    return _getJson(uri);
-  }
-
-  /// ラベル一覧
-  Future<List<Map<String, String>>> listLabels() async {
-    final uri = Uri.parse('$_base/labels');
-    final data = await _getJson(uri);
-    final List labs = (data['labels'] as List?) ?? [];
-    return labs.map<Map<String, String>>((e) => {
-      'id': (e['id'] ?? '') as String,
-      'name': (e['name'] ?? '') as String,
-    }).toList();
-  }
-
-  /// 互換用（旧サンプル名）：メッセージID一覧
-  Future<List<String>> fetchGmailMessages() async {
-    final res = await listMessages(maxResults: 20);
-    return res.map((e) => e['id'] ?? '').where((e) => e.isNotEmpty).toList();
-  }
-
-  /// 互換用（ご要望に合わせて追加）：スレッドID一覧
-  Future<List<Map<String, dynamic>>> fetchThreads({int maxResults = 20}) async {
-  final res = await listThreads(maxResults: maxResults); 
-  // res は List<Map<String,String>> になっている想定
-  return res.map<Map<String, dynamic>>((e) => {
-        'id': e['id'] ?? '',
-        'snippet': e['snippet'] ?? '',
-      }).toList();
+  // 余計なダブルクオートを削除
+  fromName = fromName.replaceAll('"', '');
 }
+
+    // 時間は簡単に "yyyy/MM/dd HH:mm" 形式
+    String timeStr = '';
+    if (date != null) {
+      timeStr =
+          '${date.year}/${date.month}/${date.day} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    }
+
+    return {
+      'id': data['id'],
+      'threadId': data['threadId'],
+      'from': fromName,
+      'snippet': data['snippet'] ?? '',
+      'time': timeStr,
+    };
+  }
+
+  // --- スレッド一覧＋最新メッセージ情報を返す ---
+  Future<List<Map<String, dynamic>>> fetchThreads({
+    int maxResults = 20,
+    int limit = 100,
+  }) async {
+    final t = await _token();
+    if (t == null) return [];
+    String? page;
+    final out = <Map<String, dynamic>>[];
+
+    while (out.length < limit) {
+      final params = {
+        'maxResults': '$maxResults',
+        if (page != null) 'pageToken': page!,
+      };
+      final uri = Uri.parse('$_base/threads').replace(queryParameters: params);
+      final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
+      if (res.statusCode != 200) {
+        throw Exception('threads failed: ${res.statusCode} ${res.body}');
+      }
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      final threads = (data['threads'] as List? ?? []);
+
+      for (final th in threads) {
+        if (out.length >= limit) break;
+        final threadId = th['id'] as String;
+
+        // threads.get でメッセージIDを取る
+        final tUri = Uri.parse('$_base/threads/$threadId?format=metadata');
+        final tRes =
+            await http.get(tUri, headers: {'Authorization': 'Bearer $t'});
+        if (tRes.statusCode != 200) continue;
+        final tData = json.decode(tRes.body) as Map<String, dynamic>;
+        final msgs = (tData['messages'] as List? ?? []);
+        if (msgs.isEmpty) continue;
+        final lastMsgId = (msgs.last as Map)['id'] as String;
+
+        final summary = await _getMessageSummary(lastMsgId);
+        out.add(summary);
+      }
+
+      page = data['nextPageToken'] as String?;
+      if (page == null) break;
+    }
+    return out;
+  }
 }

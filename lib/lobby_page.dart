@@ -17,7 +17,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => GoogleSignInPage()),
+                MaterialPageRoute(builder: (context) => const SignUpPage()),
               );
             },
             child: const Text('新規登録'),
@@ -27,7 +27,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => GoogleSignInPage()),
+                MaterialPageRoute(builder: (context) => const SignUpPage()),
               );
             },
             child: const Text('ログイン'),
@@ -37,7 +37,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) =>  ChatListScreen()),
+                MaterialPageRoute(builder: (context) => const ChatListScreen()),
               );
             },
             child: const Text('チャット画面に遷移'),
@@ -47,8 +47,8 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => GoogleSignInPage()),
-              );
+                MaterialPageRoute(builder: (context) => const SignInTest()),
+              ); 
             },
             child: const Text('Googleでログイン'),
           ),
