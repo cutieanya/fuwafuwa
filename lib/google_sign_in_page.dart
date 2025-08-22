@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+
+// ▼ v5方式で使うGoogle Sign-In
 import 'package:google_sign_in/google_sign_in.dart';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'firebase_options.dart'; // flutterfire configure で生成されるファイル
+import 'firebase_options.dart'; // flutterfire configure で生成
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,29 +29,21 @@ class SignInTest extends StatefulWidget {
 }
 
 class _SignInTestState extends State<SignInTest> {
-  GoogleSignInAccount? _user;
-  StreamSubscription<GoogleSignInAuthenticationEvent>? _authSub;
+  // ==============================================================
+  // v5 方式：自前のインスタンスを持つ（← v6 の GoogleSignIn.instance ではない）
+  // Gmail を読むための scope をここで宣言しておく（後でGmail APIで利用）
+  // ==============================================================
+  final GoogleSignIn _gsi = GoogleSignIn(
+    scopes: const [
+      'email',
+      'https://www.googleapis.com/auth/gmail.readonly', // Gmail読み取り
+    ],
+  );
+
   bool _loading = false;
   String? _message;
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeGoogleSignIn();
-  }
-
-  Future<void> _initializeGoogleSignIn() async {
-    await GoogleSignIn.instance.initialize();
-    _authSub = GoogleSignIn.instance.authenticationEvents.listen((event) {
-      if (!mounted) return;
-      setState(() {
-        _user = switch (event) {
-          GoogleSignInAuthenticationEventSignIn() => event.user,
-          GoogleSignInAuthenticationEventSignOut() => null,
-        };
-      });
-    });
-  }
+  // v6の initialize() / authenticationEvents は不要（v5では存在しないため）
 
   Future<void> _signIn() async {
     setState(() {
@@ -56,38 +51,36 @@ class _SignInTestState extends State<SignInTest> {
       _message = null;
     });
     try {
-      if (GoogleSignIn.instance.supportsAuthenticate()) {
-        // Google 側にサインイン
-        final GoogleSignInAccount? googleUser = await GoogleSignIn.instance
-            .authenticate(scopeHint: ['email']);
-        if (googleUser == null) {
-          if (!mounted) return;
-          setState(() {
-            _message = 'キャンセルされました';
-          });
-          return;
-        }
-
-        // Google のトークンを取得
-        final googleAuth = await googleUser.authentication;
-
-        // FirebaseAuth 用の credential に変換してサインイン
-        final credential = GoogleAuthProvider.credential(
-          idToken: googleAuth.idToken,
-        );
-        await FirebaseAuth.instance.signInWithCredential(credential);
-
+      // ==========================================================
+      // v5 のサインイン：ここでGoogle側のUIが出る
+      // 成功すると GoogleSignInAccount が返る（nullならキャンセル）
+      // ==========================================================
+      final GoogleSignInAccount? googleUser = await _gsi.signIn();
+      if (googleUser == null) {
         if (!mounted) return;
-        final u = FirebaseAuth.instance.currentUser;
-        setState(() {
-          _message = 'サインイン成功：${u?.displayName ?? u?.email ?? "No name"}';
-        });
-      } else {
-        if (!mounted) return;
-        setState(() {
-          _message = 'このプラットフォームは別UIでのサインインが必要です';
-        });
+        setState(() => _message = 'キャンセルされました');
+        return;
       }
+
+      // ==========================================================
+      // v5 では Google の OAuth トークンがここで取れる
+      // ・idToken：Firebase Auth 連携に使用
+      // ・accessToken：Gmail REST API への Bearer に使用（後でgmail_service.dartで使う）
+      // ==========================================================
+      final googleAuth = await googleUser.authentication;
+
+      // FirebaseAuth 用の credential に変換してログイン
+      final credential = GoogleAuthProvider.credential(
+        idToken: googleAuth.idToken,
+        accessToken: googleAuth.accessToken, // ★ v5 でのみ取得可
+      );
+      await FirebaseAuth.instance.signInWithCredential(credential);
+
+      if (!mounted) return;
+      final u = FirebaseAuth.instance.currentUser;
+      setState(() {
+        _message = 'サインイン成功：${u?.displayName ?? u?.email ?? "No name"}';
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -103,7 +96,7 @@ class _SignInTestState extends State<SignInTest> {
     setState(() => _loading = true);
     try {
       await FirebaseAuth.instance.signOut();
-      await GoogleSignIn.instance.signOut();
+      await _gsi.signOut(); // v5 のサインアウト
       if (!mounted) return;
       setState(() {
         _message = 'サインアウトしました';
@@ -117,12 +110,6 @@ class _SignInTestState extends State<SignInTest> {
       if (!mounted) return;
       setState(() => _loading = false);
     }
-  }
-
-  @override
-  void dispose() {
-    _authSub?.cancel(); // 購読解除
-    super.dispose();
   }
 
   @override
