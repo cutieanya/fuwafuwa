@@ -3,6 +3,7 @@ import 'package:fuwafuwa/chat_list_screen.dart';
 import 'package:fuwafuwa/sign_up_page.dart';
 import 'package:fuwafuwa/google_sign_in_page.dart';
 
+
 class LobbyPage extends StatelessWidget {
   const LobbyPage({super.key});
 
@@ -16,7 +17,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const SignUpPage()),
+                MaterialPageRoute(builder: (context) => GoogleSignInPage()),
               );
             },
             child: const Text('新規登録'),
@@ -26,7 +27,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const SignUpPage()),
+                MaterialPageRoute(builder: (context) => GoogleSignInPage()),
               );
             },
             child: const Text('ログイン'),
@@ -36,7 +37,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const ChatListScreen()),
+                MaterialPageRoute(builder: (context) =>  ChatListScreen()),
               );
             },
             child: const Text('チャット画面に遷移'),
@@ -46,7 +47,7 @@ class LobbyPage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const SignInTest()),
+                MaterialPageRoute(builder: (context) => GoogleSignInPage()),
               );
             },
             child: const Text('Googleでログイン'),
