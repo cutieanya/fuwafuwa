@@ -1,69 +1,27 @@
 import 'package:flutter/material.dart';
 import 'chat_screen.dart';
+import 'gmail_service.dart'; // ★追加：Gmail APIサービス
 
-// Chatクラスの設計図を元に、仮のデータリストを作成
-final List<Chat> dummyChatList = [
-  Chat(
-    threadId: '0',
-    name: 'cutieanya',
-    lastMessage: '今日の進捗どう？',
-    time: '18:30',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '1',
-    name: '田中さん',
-    lastMessage: '例の件、承知しました。',
-    time: '17:02',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '2',
-    name: 'Flutter大好きクラブ',
-    lastMessage: '次の勉強会は来週です！',
-    time: '昨日',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '3',
-    name: '門田',
-    lastMessage: 'すずはです',
-    time: '昨日',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '4',
-    name: 'みき',
-    lastMessage: '中田です',
-    time: '昨日',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '5',
-    name: 'ほのか',
-    lastMessage: 'ほのかです',
-    time: '昨日',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '6',
-    name: '森コ',
-    lastMessage: 'もりこです',
-    time: '昨日',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-  Chat(
-    threadId: '7',
-    name: 'mndns232',
-    lastMessage: 'もりこです',
-    time: '昨日',
-    avatarUrl: 'https://placehold.jp/150x150.png',
-  ),
-];
 // チャット一覧画面のWidget
-class ChatListScreen extends StatelessWidget {
+class ChatListScreen extends StatefulWidget { // ★Statefulに変更
   // コンストラクタ（おまじないのようなもの）
   const ChatListScreen({super.key});
+
+  //★追加
+  @override
+  State<ChatListScreen> createState() => _ChatListScreenState();
+}
+
+class _ChatListScreenState extends State<ChatListScreen> {
+  final _service = GmailService(); // ★追加：Gmailサービスのインスタンス
+  late Future<List<Map<String, dynamic>>> _futureChats; // ★追加：非同期で取得するチャットリスト
+  @override
+  void initState() {
+    super.initState();
+    // ★追加：起動時にGmailから取得（クエリを入れたい場合は fetchThreads(query: 'from:*@example.co.jp') など）
+    _futureChats = _service.fetchThreads();
+  }
+//★追加ここまで
 
   @override
   Widget build(BuildContext context) {
@@ -73,16 +31,31 @@ class ChatListScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('チャット'), // ヘッダーのタイトル
       ),
-      // bodyは画面のメインコンテンツ部分
-      // class ChatListScreenの中のbody:以降を書き換える
+        // bodyは画面のメインコンテンツ部分
+      //★下にfuturebuilderを追加した
+        body: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _futureChats,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('Error: ${snapshot.error}'));
+              }
+              final maps = snapshot.data ?? [];
+              if (maps.isEmpty) {
+                return const Center(child: Text('データがありません'));
+              }
+              // ★追加：Map → 既存の Chat クラスに変換（UIコードはほぼそのまま使える）
+              final chatList = maps.map(_mapToChat).toList();
 
-      // bodyは画面のメインコンテンツ部分
-      body: ListView.builder(
-        // itemCountをダミーデータの数に変更
-        itemCount: dummyChatList.length,
+              // bodyは画面のメインコンテンツ部分
+      return ListView.builder(
+        // itemCountをダミーデータの数に変更 →★ Gmail取得データの数に変更
+        itemCount: chatList.length,
         itemBuilder: (context, index) {
           // リストからindex番目のチャットデータを取得
-          final chat = dummyChatList[index];
+          final chat = chatList[index];
 
           // ListTileがそのデータを元に表示するように変更
           return ListTile(
@@ -103,11 +76,37 @@ class ChatListScreen extends StatelessWidget {
             },
           );
         },
-      ),
+      );
+            },
+        ),
     );
   }
-}
+// ★追加：サービス（Map） → 既存 Chat への変換
+//   - サービス側のキー名が不足していても動くようにデフォルトを用意
+Chat _mapToChat(Map<String, dynamic> m) {
+  final threadId = (m['threadId'] ?? m['id'] ?? '').toString();
 
+  // 差出人（from / counterpart）を優先して名前に
+  final name = (m['counterpart'] ?? m['from'] ?? '(unknown)').toString();
+
+  // 最後のメッセージは snippet があればそれを使う
+  final lastMessage = (m['lastMessage'] ?? m['snippet'] ?? '(No message)').toString();
+
+  // 時刻表示（"HH:mm" / "昨日" / "M/d" 等）。サービス側が time を用意していなければ空文字。
+  final time = (m['time'] ?? '').toString();
+
+  // アイコンはとりあえずダミー（あとでプロフィール画像に差し替え可能）
+  const avatar = 'https://placehold.jp/150x150.png';
+
+  return Chat(
+    threadId: threadId,
+    name: name,
+    lastMessage: lastMessage,
+    time: time,
+    avatarUrl: avatar,
+  );
+}
+}
 // このコードをchat_list_screen.dartの一番下に追加
 
 class Chat {
