@@ -54,17 +54,17 @@ class GmailService {
     }
 
     // From をシンプルに抽出
-String fromName = '(unknown)';
-if (from != null && from.isNotEmpty) {
-  final emailMatch = RegExp(r'^(.*)<(.+)>$').firstMatch(from);
-  if (emailMatch != null) {
-    fromName = emailMatch.group(1)?.trim() ?? emailMatch.group(2)!;
-  } else {
-    fromName = from!;
-  }
-  // 余計なダブルクオートを削除
-  fromName = fromName.replaceAll('"', '');
-}
+    String fromName = '(unknown)';
+    if (from != null && from.isNotEmpty) {
+      final emailMatch = RegExp(r'^(.*)<(.+)>$').firstMatch(from);
+      if (emailMatch != null) {
+        fromName = emailMatch.group(1)?.trim() ?? emailMatch.group(2)!;
+      } else {
+        fromName = from!;
+      }
+      // 余計なダブルクオートを削除
+      fromName = fromName.replaceAll('"', '');
+    }
 
     // 時間は簡単に "yyyy/MM/dd HH:mm" 形式
     String timeStr = '';
@@ -111,8 +111,10 @@ if (from != null && from.isNotEmpty) {
 
         // threads.get でメッセージIDを取る
         final tUri = Uri.parse('$_base/threads/$threadId?format=metadata');
-        final tRes =
-            await http.get(tUri, headers: {'Authorization': 'Bearer $t'});
+        final tRes = await http.get(
+          tUri,
+          headers: {'Authorization': 'Bearer $t'},
+        );
         if (tRes.statusCode != 200) continue;
         final tData = json.decode(tRes.body) as Map<String, dynamic>;
         final msgs = (tData['messages'] as List? ?? []);
