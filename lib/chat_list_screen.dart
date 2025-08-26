@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
-
 import 'person_chat_screen.dart'; // 相手ごとのトーク画面
 import 'gmail_service.dart'; // fetchThreadsBySenders / countUnreadBySenders
+import 'lobby_page.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -228,6 +228,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
       appBar: AppBar(
         title: const Text('チャット'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.home),
+            tooltip: 'ロビーへ戻る',
+            onPressed: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (_) => const LobbyPage()),
+              );
+            },
+          ),
           // 許可リストの確認・削除（リアルタイム）
           StreamBuilder<Set<String>>(
             stream: _streamAllowedSenders(),
@@ -336,46 +346,77 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       final unread =
                           unreadMap[chat.senderEmail.toLowerCase()] ?? 0;
 
-                      return ListTile(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        tileColor: cs.surfaceVariant,
-                        leading: _avatarWithBadge(chat.avatarUrl, unread),
-                        title: Text(
-                          chat.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          chat.lastMessage,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                      return Slidable(
+                        key: ValueKey(chat.threadId),
+                        endActionPane: ActionPane(
+                          motion: const ScrollMotion(),
                           children: [
-                            Text(
-                              chat.time,
-                              style: const TextStyle(fontSize: 12),
+                            // ← 左へスワイプで出るアクション（右側）
+                            SlidableAction(
+                              onPressed: (_) async {
+                                await _markSenderAllRead(chat.senderEmail);
+
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('${chat.name} を既読にしました'),
+                                  ),
+                                );
+                                setState(() {}); // 未読数再計算させる
+                              },
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              icon: Icons.mark_email_read,
+                              label: '既読',
                             ),
-                            const SizedBox(height: 6),
-                            _unreadChip(unread),
                           ],
                         ),
-                        onTap: () {
-                          if (chat.senderEmail.isEmpty) return;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => PersonChatScreen(
-                                senderEmail: chat.senderEmail,
-                                title: chat.name,
+                        child: ListTile(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          tileColor: cs.surfaceVariant,
+                          leading: _avatarWithBadge(
+                            chat.avatarUrl,
+                            (unreadMap[chat.senderEmail.toLowerCase()] ?? 0),
+                          ), // 未読バッジ
+                          title: Text(
+                            chat.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            chat.lastMessage,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                chat.time,
+                                style: const TextStyle(fontSize: 12),
                               ),
-                            ),
-                          );
-                        },
+                              const SizedBox(height: 6),
+                              _unreadChip(
+                                unreadMap[chat.senderEmail.toLowerCase()] ?? 0,
+                              ),
+                            ],
+                          ),
+                          onTap: () {
+                            if (chat.senderEmail.isEmpty) return;
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PersonChatScreen(
+                                  senderEmail: chat.senderEmail,
+                                  title: chat.name,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       );
                     },
                   );
