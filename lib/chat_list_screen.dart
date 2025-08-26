@@ -1,127 +1,437 @@
+// chat_list_screen.dart
 import 'package:flutter/material.dart';
-import 'chat_screen.dart';
-import 'gmail_service.dart'; // ★追加：Gmail APIサービス
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
-// チャット一覧画面のWidget
-class ChatListScreen extends StatefulWidget { // ★Statefulに変更
-  // コンストラクタ（おまじないのようなもの）
+import 'person_chat_screen.dart'; // 相手ごとのトーク画面
+import 'gmail_service.dart'; // fetchThreadsBySenders / countUnreadBySenders
+
+class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
 
-  //★追加
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
 }
 
 class _ChatListScreenState extends State<ChatListScreen> {
-  final _service = GmailService(); // ★追加：Gmailサービスのインスタンス
-  late Future<List<Map<String, dynamic>>> _futureChats; // ★追加：非同期で取得するチャットリスト
-  @override
-  void initState() {
-    super.initState();
-    // ★追加：起動時にGmailから取得（クエリを入れたい場合は fetchThreads(query: 'from:*@example.co.jp') など）
-    _futureChats = _service.fetchThreads();
-  }
-//★追加ここまで
+  final _service = GmailService();
+  final _addrController = TextEditingController();
 
+  // Firestore ドキュメント参照（ログイン必須）
+  DocumentReference<Map<String, dynamic>> get _filtersDoc {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      throw StateError('未ログインです。LobbyPage からログインしてから遷移してください。');
+    }
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('prefs')
+        .doc('filters');
+  }
+
+  @override
+  void dispose() {
+    _addrController.dispose();
+    super.dispose();
+  }
+
+  // ---------- Firestore I/O ----------
+  Stream<Set<String>> _streamAllowedSenders() {
+    return _filtersDoc.snapshots().map((snap) {
+      final list =
+          (snap.data()?['allowedSenders'] as List?)?.cast<String>() ??
+          const <String>[];
+      return list.map((e) => e.toLowerCase()).toSet();
+    });
+  }
+
+  Future<void> _addAllowedSender(String emailRaw) async {
+    final email = _extractEmail(emailRaw.trim());
+    if (email == null || email.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('メールアドレスの形式が正しくありません')));
+      return;
+    }
+    await _filtersDoc.set({
+      'allowedSenders': FieldValue.arrayUnion([email]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _removeAllowedSender(String email) async {
+    await _filtersDoc.set({
+      'allowedSenders': FieldValue.arrayRemove([email.toLowerCase()]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // ---------- Gmail 取得 ----------
+  Future<List<Map<String, dynamic>>> _loadChatsFor(Set<String> senders) async {
+    if (senders.isEmpty) return const <Map<String, dynamic>>[];
+    final list = await _service.fetchThreadsBySenders(
+      senders: senders.toList(),
+      newerThan: '30d',
+      maxResults: 20,
+      limit: 200,
+    );
+    return _dedupBySender(list);
+  }
+
+  // 未読数まとめて取得（送信元 -> 件数）
+  Future<Map<String, int>> _loadUnreadCounts(Set<String> senders) {
+    if (senders.isEmpty) return Future.value(<String, int>{});
+    return _service.countUnreadBySenders(
+      senders.toList(),
+      newerThan: '365d', // 必要に応じて期間を絞る（広くてもOK）
+      pageSize: 50,
+      capPerSender: 500,
+    );
+  }
+
+  // ---------- 重複排除（送信元ごと最新のみ） ----------
+  List<Map<String, dynamic>> _dedupBySender(List<Map<String, dynamic>> raw) {
+    final bySender = <String, Map<String, dynamic>>{};
+
+    for (final m in raw) {
+      final email = ((m['fromEmail'] ?? '') as String).toLowerCase();
+      final fallbackEmail = email.isNotEmpty
+          ? email
+          : _extractEmail((m['from'] ?? m['counterpart'] ?? '').toString()) ??
+                '';
+      final key = fallbackEmail;
+      if (key.isEmpty) continue;
+
+      final current = bySender[key];
+
+      final newTime = m['timeDt'] is DateTime ? m['timeDt'] as DateTime : null;
+      final curTime = (current != null && current['timeDt'] is DateTime)
+          ? current['timeDt'] as DateTime
+          : null;
+
+      final shouldReplace =
+          (current == null) ||
+          (newTime != null && (curTime == null || newTime.isAfter(curTime)));
+
+      if (shouldReplace) {
+        bySender[key] = m..['fromEmail'] = key; // keyを確実に保持
+      }
+    }
+
+    final list = bySender.values.toList();
+
+    list.sort((a, b) {
+      final da = a['timeDt'] is DateTime ? a['timeDt'] as DateTime : null;
+      final db = b['timeDt'] is DateTime ? b['timeDt'] as DateTime : null;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+
+    return list;
+  }
+
+  // ---------- UI ユーティリティ ----------
+  String? _extractEmail(String raw) {
+    final m = RegExp(
+      r'([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,})',
+    ).firstMatch(raw);
+    return m?.group(1)?.toLowerCase();
+  }
+
+  Future<void> _showAddSenderDialog() async {
+    _addrController.clear();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('表示する送信元アドレスを追加'),
+        content: TextField(
+          controller: _addrController,
+          keyboardType: TextInputType.emailAddress,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '例: user@example.com'),
+          onSubmitted: (_) => Navigator.of(context).pop(_addrController.text),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(null),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(_addrController.text),
+            child: const Text('追加'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.trim().isNotEmpty) {
+      await _addAllowedSender(result);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('送信元を追加しました')));
+    }
+  }
+
+  // ある senderEmail の未読を全部既読に
+  Future<void> _markSenderAllRead(String senderEmail) async {
+    final q =
+        'from:${senderEmail.toLowerCase()} is:unread'; // 必要なら newer_than:90d など追加
+    final n = await _service.markReadByQuery(q);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$n 件を既読にしました')));
+    setState(() {}); // 未読バッジ再計算のため（あなたの実装に合わせて再ロード）
+  }
+
+  // アバター＋未読バッジ
+  Widget _avatarWithBadge(String url, int unread) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [CircleAvatar(radius: 22, backgroundImage: NetworkImage(url))],
+    );
+  }
+
+  // 右側に表示する未読チップ
+  Widget _unreadChip(int unread) {
+    if (unread <= 0) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.red.withOpacity(0.35)),
+      ),
+      child: Text(
+        unread > 99 ? '99+' : '$unread',
+        style: const TextStyle(
+          color: Colors.red,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+    // 右側に時刻と並べたいなら Row で包むなど調整どうぞ
+  }
+
+  // ---------- 画面 ----------
   @override
   Widget build(BuildContext context) {
-    // Scaffoldは画面の基本的な骨組みを提供してくれる便利なWidget
+    final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
-      // appBerは画面上部のヘッダー部分
       appBar: AppBar(
-        title: const Text('チャット'), // ヘッダーのタイトル
+        title: const Text('チャット'),
+        actions: [
+          // 許可リストの確認・削除（リアルタイム）
+          StreamBuilder<Set<String>>(
+            stream: _streamAllowedSenders(),
+            builder: (context, snap) {
+              final allowed = snap.data ?? const <String>{};
+              return PopupMenuButton<String>(
+                icon: const Icon(Icons.filter_list),
+                itemBuilder: (context) {
+                  if (allowed.isEmpty) {
+                    return const [
+                      PopupMenuItem<String>(
+                        value: '__none__',
+                        enabled: false,
+                        child: Text('許可済み送信元はありません'),
+                      ),
+                    ];
+                  }
+                  return allowed
+                      .map(
+                        (e) => PopupMenuItem<String>(
+                          value: e,
+                          child: Row(
+                            children: [
+                              const Icon(Icons.email, size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text(e)),
+                              IconButton(
+                                tooltip: 'この送信元を削除',
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () => Navigator.pop(context, e),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList();
+                },
+                onSelected: (email) async {
+                  if (email != '__none__') {
+                    await _removeAllowedSender(email);
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('削除しました: $email')));
+                  }
+                },
+              );
+            },
+          ),
+        ],
       ),
-        // bodyは画面のメインコンテンツ部分
-      //★下にfuturebuilderを追加した
-        body: FutureBuilder<List<Map<String, dynamic>>>(
-            future: _futureChats,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
+
+      body: StreamBuilder<Set<String>>(
+        stream: _streamAllowedSenders(),
+        builder: (context, snap) {
+          final allowed = snap.data ?? const <String>{};
+
+          if (allowed.isEmpty) {
+            return const Center(child: Text('右下の「＋」から表示したい送信元を追加してください'));
+          }
+
+          // メインの取得（スレッド最新まとめ）
+          return FutureBuilder<List<Map<String, dynamic>>>(
+            future: _loadChatsFor(allowed),
+            builder: (context, fsnap) {
+              if (fsnap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
-              if (snapshot.hasError) {
-                return Center(child: Text('Error: ${snapshot.error}'));
+              if (fsnap.hasError) {
+                return Center(child: Text('Error: ${fsnap.error}'));
               }
-              final maps = snapshot.data ?? [];
-              if (maps.isEmpty) {
-                return const Center(child: Text('データがありません'));
+
+              final chatsRaw = fsnap.data ?? const <Map<String, dynamic>>[];
+              if (chatsRaw.isEmpty) {
+                // 未読バッジも不要だが、allowed があるので一応未読だけチェックしても良い
+                return const Center(child: Text('一致するスレッドがありません'));
               }
-              // ★追加：Map → 既存の Chat クラスに変換（UIコードはほぼそのまま使える）
-              final chatList = maps.map(_mapToChat).toList();
 
-              // bodyは画面のメインコンテンツ部分
-      return ListView.builder(
-        // itemCountをダミーデータの数に変更 →★ Gmail取得データの数に変更
-        itemCount: chatList.length,
-        itemBuilder: (context, index) {
-          // リストからindex番目のチャットデータを取得
-          final chat = chatList[index];
+              // 送信元メール → 最新スレッド情報
+              final senderToLatest = <String, Map<String, dynamic>>{};
+              for (final m in chatsRaw) {
+                final email = ((m['fromEmail'] ?? '') as String).toLowerCase();
+                if (email.isNotEmpty) senderToLatest[email] = m;
+              }
 
-          // ListTileがそのデータを元に表示するように変更
-          return ListTile(
-            leading: CircleAvatar(
-              backgroundImage: NetworkImage(chat.avatarUrl), // データからURLを取得
-            ),
-            title: Text(chat.name), // データから名前を取得
-            subtitle: Text(chat.lastMessage), // データからメッセージを取得
-            trailing: Text(chat.time), // データから時間を取得
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  // ChatScreenを呼び出し、タップされたチャットの名前(chat.name)を渡す
-                  builder: (context) => ChatScreen(threadId: chat.threadId),
-                ),
+              // 未読数（送信元ごと）
+              return FutureBuilder<Map<String, int>>(
+                future: _loadUnreadCounts(allowed),
+                builder: (context, usnap) {
+                  final unreadMap = usnap.data ?? const <String, int>{};
+
+                  // Map -> Chat モデル
+                  final chatList = senderToLatest.values
+                      .map(_mapToChat)
+                      .toList();
+
+                  return ListView.separated(
+                    itemCount: chatList.length,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
+                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    itemBuilder: (context, index) {
+                      final chat = chatList[index];
+                      final unread =
+                          unreadMap[chat.senderEmail.toLowerCase()] ?? 0;
+
+                      return ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        tileColor: cs.surfaceVariant,
+                        leading: _avatarWithBadge(chat.avatarUrl, unread),
+                        title: Text(
+                          chat.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          chat.lastMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              chat.time,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            const SizedBox(height: 6),
+                            _unreadChip(unread),
+                          ],
+                        ),
+                        onTap: () {
+                          if (chat.senderEmail.isEmpty) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PersonChatScreen(
+                                senderEmail: chat.senderEmail,
+                                title: chat.name,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
               );
             },
           );
         },
-      );
-            },
-        ),
+      ),
+
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddSenderDialog,
+        child: const Icon(Icons.add),
+      ),
+      backgroundColor: cs.surface,
     );
   }
-// ★追加：サービス（Map） → 既存 Chat への変換
-//   - サービス側のキー名が不足していても動くようにデフォルトを用意
-Chat _mapToChat(Map<String, dynamic> m) {
-  final threadId = (m['threadId'] ?? m['id'] ?? '').toString();
 
-  // 差出人（from / counterpart）を優先して名前に
-  final name = (m['counterpart'] ?? m['from'] ?? '(unknown)').toString();
+  // Map -> Chat 表示モデル
+  Chat _mapToChat(Map<String, dynamic> m) {
+    final threadId = (m['threadId'] ?? m['id'] ?? '').toString();
+    final name = (m['counterpart'] ?? m['from'] ?? '(unknown)').toString();
+    final lastMessage = (m['lastMessage'] ?? m['snippet'] ?? '(No message)')
+        .toString();
+    final time = (m['time'] ?? '').toString();
+    final senderEmail = (m['fromEmail'] ?? _extractEmail(name) ?? '')
+        .toString();
 
-  // 最後のメッセージは snippet があればそれを使う
-  final lastMessage = (m['lastMessage'] ?? m['snippet'] ?? '(No message)').toString();
+    const avatar = 'https://placehold.jp/150x150.png';
 
-  // 時刻表示（"HH:mm" / "昨日" / "M/d" 等）。サービス側が time を用意していなければ空文字。
-  final time = (m['time'] ?? '').toString();
-
-  // アイコンはとりあえずダミー（あとでプロフィール画像に差し替え可能）
-  const avatar = 'https://placehold.jp/150x150.png';
-
-  return Chat(
-    threadId: threadId,
-    name: name,
-    lastMessage: lastMessage,
-    time: time,
-    avatarUrl: avatar,
-  );
+    return Chat(
+      threadId: threadId,
+      name: name,
+      lastMessage: lastMessage,
+      time: time,
+      avatarUrl: avatar,
+      senderEmail: senderEmail,
+    );
+  }
 }
-}
-// このコードをchat_list_screen.dartの一番下に追加
 
+// --- 表示モデル ---
 class Chat {
   final String threadId;
-  final String name; // 相手の名前
-  final String lastMessage; // 最後のメッセージ
-  final String time; // 時間
-  final String avatarUrl; // アイコン画像のURL
+  final String name;
+  final String lastMessage;
+  final String time;
+  final String avatarUrl;
+  final String senderEmail;
 
-  // 設計図から実体を作るための部品
   Chat({
     required this.threadId,
     required this.name,
     required this.lastMessage,
     required this.time,
     required this.avatarUrl,
+    required this.senderEmail,
   });
 }
