@@ -56,7 +56,9 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // 初回レンダー完了後、最下部へスクロール（古い履歴がある想定）
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(animate: false));
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _scrollToBottom(animate: false),
+    );
   }
 
   @override
@@ -107,8 +109,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final cs = Theme.of(context).colorScheme;
 
     // 表示用：時刻の古い順に並べ替え（リスト本体は触らない）
-    final sortedMessages = [..._messages]
-      ..sort((a, b) => (a['time'] as DateTime).compareTo(b['time'] as DateTime));
+    final sortedMessages = [
+      ..._messages,
+    ]..sort((a, b) => (a['time'] as DateTime).compareTo(b['time'] as DateTime));
 
     return Scaffold(
       // 画面の地色（明るめ）
@@ -119,7 +122,7 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Text('スレッド ${widget.threadId}'),
         centerTitle: true,
         backgroundColor: cs.surfaceContainerHighest, // ← 濃い面
-        foregroundColor: cs.onSurface,               // ← 文字/アイコン色
+        foregroundColor: cs.onSurface, // ← 文字/アイコン色
         elevation: 0,
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
@@ -135,32 +138,44 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               itemCount: sortedMessages.length,
               itemBuilder: (context, index) {
-                final msg  = sortedMessages[index];
+                final msg = sortedMessages[index];
                 final prev = index > 0 ? sortedMessages[index - 1] : null;
                 final next = index < sortedMessages.length - 1
                     ? sortedMessages[index + 1]
                     : null;
 
                 // 同じ送信者&同じ“分”であれば、最後の1件だけ時刻を表示
-                final showTime = next == null ||
+                final showTime =
+                    next == null ||
                     next['isMe'] != msg['isMe'] ||
-                    !_isSameMinute(next['time'] as DateTime, msg['time'] as DateTime);
+                    !_isSameMinute(
+                      next['time'] as DateTime,
+                      msg['time'] as DateTime,
+                    );
 
                 // 連投の間隔（上側／下側）を詰めるためのフラグ
-                final compactWithPrev = prev != null &&
+                final compactWithPrev =
+                    prev != null &&
                     prev['isMe'] == msg['isMe'] &&
-                    _isSameMinute(prev['time'] as DateTime, msg['time'] as DateTime);
+                    _isSameMinute(
+                      prev['time'] as DateTime,
+                      msg['time'] as DateTime,
+                    );
 
-                final compactWithNext = next != null &&
+                final compactWithNext =
+                    next != null &&
                     next['isMe'] == msg['isMe'] &&
-                    _isSameMinute(next['time'] as DateTime, msg['time'] as DateTime);
+                    _isSameMinute(
+                      next['time'] as DateTime,
+                      msg['time'] as DateTime,
+                    );
 
                 return ChatBubble(
                   text: msg['text'] as String,
                   time: msg['time'] as DateTime,
                   isMe: msg['isMe'] as bool,
-                  showTime: showTime,            // ← 最後だけ時刻
-                  compact: compactWithPrev,      // ← 上を詰める
+                  showTime: showTime, // ← 最後だけ時刻
+                  compact: compactWithPrev, // ← 上を詰める
                   compactBelow: compactWithNext, // ← 下を詰める
                 );
               },
