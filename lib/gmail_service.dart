@@ -507,4 +507,41 @@ class GmailService {
     }
     return ids.length;
   }
+  // gmail_service.dart の GmailService クラスの中に追加
+
+  Future<List<Map<String, dynamic>>> fetchMessagesByThread(String threadId) async {
+    final t = await _token();
+    if (t == null) return [];
+
+    final uri = Uri.parse('$_base/threads/$threadId?format=full');
+    final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
+
+    if (res.statusCode != 200) {
+      throw Exception('Failed to fetch thread details: ${res.body}');
+    }
+
+    final data = json.decode(res.body) as Map<String, dynamic>;
+    final messagesData = (data['messages'] as List? ?? []).cast<Map<String, dynamic>>();
+
+    // 既存の _getMessageSummary を再利用してサマリ情報を取得
+    final summaries = <Map<String, dynamic>>[];
+    for (final msgData in messagesData) {
+      final summary = await _getMessageSummary(msgData['id'] as String);
+      if (summary.isNotEmpty) {
+        summaries.add(summary);
+      }
+    }
+
+    // 時系列（古い順）にソート
+    summaries.sort((a, b) {
+      final da = a['timeDt'] as DateTime?;
+      final db = b['timeDt'] as DateTime?;
+      if (da == null && db == null) return 0;
+      if (da == null) return -1;
+      if (db == null) return 1;
+      return da.compareTo(db);
+    });
+
+    return summaries;
+  }
 }

@@ -40,6 +40,8 @@ dependencies:
   google_sign_in: ^5.4.4
   googleapis: ^13.2.0
   http: ^1.2.2
+  mailer: ^6.5.0
+  enough_mail: ^2.1.7
   flutter_slidable: ^3.0.0
 
 dev_dependencies:
