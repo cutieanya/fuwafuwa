@@ -35,6 +35,7 @@ class GmailSendService {
   Future<bool> sendEmail({
     required Map<String, String> authHeaders,
     required String rawMessage,
+    required String threadId,
   }) async {
     final url = Uri.parse('https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
     try {
@@ -46,6 +47,7 @@ class GmailSendService {
         },
         body: json.encode({
           'raw': rawMessage,
+          'threadId': threadId,
         }),
       );
 

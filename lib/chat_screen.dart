@@ -17,7 +17,14 @@ class ChatScreen extends StatefulWidget {
 class _ChatData {
   final String myEmail;
   final List<Map<String, dynamic>> messages;
-  _ChatData({required this.myEmail, required this.messages});
+  final String subject;
+  final String lastMessageId;
+  _ChatData({
+    required this.myEmail,
+    required this.messages,
+    required this.subject,
+    required this.lastMessageId,
+  });
 }
 
 class _ChatScreenState extends State<ChatScreen> {
@@ -46,14 +53,24 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// APIからチャット履歴と自身のEmailを取得する
   Future<_ChatData> _load() async {
-    // 自身のEmailを取得（自分/相手の判定に使う）
+    // 自身のEmailを取得
     final myEmail = (await _service.myAddress()) ?? '';
 
-    // GmailServiceに新しく実装する関数を呼び出す
-    final messages = await _service.fetchMessagesByThread(widget.threadId);
+    // 1. Mapとしてデータを受け取る
+    final threadData = await _service.fetchMessagesByThread(widget.threadId);
 
-    // 取得したデータをまとめて返す
-    return _ChatData(myEmail: myEmail, messages: messages);
+    // 2. Mapから各データを取り出す
+    final messages = (threadData['messages'] as List? ?? []).cast<Map<String, dynamic>>();
+    final subject = threadData['subject'] as String? ?? '';
+    final lastMessageId = threadData['lastMessageIdHeader'] as String? ?? '';
+
+    // 3. _ChatDataにすべての情報を渡す
+    return _ChatData(
+      myEmail: myEmail,
+      messages: messages,
+      subject: subject,
+      lastMessageId: lastMessageId,
+    );
   }
 
   @override
@@ -64,6 +81,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// 送信処理
+  // [修正後]
   Future<void> _handleSend() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
@@ -72,58 +90,50 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.clear();
 
     try {
-      // ★★★ 修正・追加箇所 ① ★★★
-      // initStateで非同期にロードしたチャットデータをここで取得します。
       final chatData = await _future;
       final myEmail = chatData.myEmail;
       final messages = chatData.messages;
 
-      // ★★★ 修正・追加箇所 ② ★★★
-      // メッセージ履歴から相手のメールアドレスを特定するためのロジックです。
+      // (相手のメールアドレスを特定するロジックはそのまま)
       String? recipientEmail;
-      // メッセージリストを後ろから（新しいものから）順番に確認します。
       for (final msg in messages.reversed) {
         final fromEmail = (msg['fromEmail'] ?? '').toString().toLowerCase();
-        // 送信者(fromEmail)が空でなく、かつ自分のアドレスでなければ、それが相手のアドレスです。
         if (fromEmail.isNotEmpty && fromEmail != myEmail.toLowerCase()) {
-          recipientEmail = fromEmail; // 相手のアドレスを保存
-          print("found!");
-          print("recipientEmail:   ");
-          print(recipientEmail);
-          break; // 相手が見つかったのでループを抜けます。
+          recipientEmail = fromEmail;
+          break;
         }
       }
 
-      // ★★★ 修正・追加箇所 ③ ★★★
-      // ループを抜けても相手が見つからなかった場合（例：自分しかいないスレッド）はエラーとします。
       if (recipientEmail == null) {
         throw Exception('返信相手を特定できませんでした。');
       }
 
-      // 認証情報の取得
       final currentUser = await _googleSignIn.signInSilently();
       if (currentUser == null) throw Exception('ログインしていません');
       final authHeaders = await currentUser.authHeaders;
 
-      // TODO: 件名も動的に設定するのが望ましい
-      const subject = 'Re: Chat';
+      // ★★★ 1. 件名を動的に設定 ★★★
+      // 元の件名に "Re: " がついていなければ追加する
+      final subject = chatData.subject.toLowerCase().startsWith('re: ')
+          ? chatData.subject
+          : 'Re: ${chatData.subject}';
 
+      // (もしcreateMimeMessageを修正した場合、ここでヘッダー情報を渡す)
       final rawMessage = _sendservice.createMimeMessage(
-        // ★★★ 修正・追加箇所 ④ ★★★
-        // ハードコードされていた宛先を、上で特定した動的なアドレスに変更します。
         to: recipientEmail,
         from: currentUser.email,
         subject: subject,
         body: messageToSend,
+        // inReplyTo: chatData.lastMessageId, // 必要に応じて
       );
 
       final success = await _sendservice.sendEmail(
         authHeaders: authHeaders,
         rawMessage: rawMessage,
+        threadId: widget.threadId, // ★★★ 2. ここでthreadIdを渡す！ ★★★
       );
 
       if (success) {
-        // 送信成功後、チャットをリロード
         setState(() {
           _future = _load();
         });
@@ -135,8 +145,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         _controller.text = messageToSend;
         ScaffoldMessenger.of(context).showSnackBar(
-          // ★★★ 修正・追加箇所 ⑤ ★★★
-          // 送信失敗時に、より具体的なエラー内容を画面に表示します。
           SnackBar(content: Text('メッセージの送信に失敗しました: $e')),
         );
       }

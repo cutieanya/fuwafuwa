@@ -75,20 +75,19 @@ class GmailService {
     return q;
   }
 
-  // ---------------------------------------------------------------------------
-  // メッセージ1件をサマリへ（From / Date / snippet など）
-  // - バブル表示のために fromEmail / timeDt も返却（左右判定や時刻整列に便利）
-  // ---------------------------------------------------------------------------
+
+
   Future<Map<String, dynamic>> _getMessageSummary(String messageId) async {
     final t = await _token();
     if (t == null) return {};
 
-    // メタデータ形式：本文本体は取得せず、必要なヘッダだけもらう
     final uri = Uri.parse(
       '$_base/messages/$messageId'
-      '?format=metadata'
-      '&metadataHeaders=From'
-      '&metadataHeaders=Date',
+          '?format=metadata'
+          '&metadataHeaders=From'
+          '&metadataHeaders=Date'
+          '&metadataHeaders=Subject'
+          '&metadataHeaders=Message-ID',
     );
 
     final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
@@ -97,61 +96,65 @@ class GmailService {
     }
     final data = json.decode(res.body) as Map<String, dynamic>;
 
-    // internalDate はエポックms（UTC）→ 端末ローカルへ
     final internalMs = int.tryParse('${data['internalDate'] ?? ''}');
     final date = internalMs != null
         ? DateTime.fromMillisecondsSinceEpoch(internalMs, isUtc: true).toLocal()
         : null;
 
-    // ヘッダから From を抽出
     String? fromHeader;
+    // ★★★ 2. subject と messageIdHeader を格納する変数を追加 ★★★
+    String subject = '';
+    String messageIdHeader = '';
+
     final headers = (data['payload']?['headers'] as List? ?? [])
         .cast<Map<String, dynamic>>();
     for (final h in headers) {
       final name = (h['name'] ?? '').toString().toLowerCase();
       final value = (h['value'] ?? '').toString();
-      if (name == 'from') fromHeader = value;
+      if (name == 'from') {
+        fromHeader = value;
+      } else if (name == 'subject') { // ★★★ 3. Subjectヘッダーを解析 ★★★
+        subject = value;
+      } else if (name == 'message-id') { // ★★★ 4. Message-IDヘッダーを解析 ★★★
+        messageIdHeader = value;
+      }
     }
 
-    // From を表示名とメールに分割
+    // (Fromヘッダーをパースする部分はそのまま)
     String fromName = '(unknown)';
     String fromEmail = '';
-    if (fromHeader != null && fromHeader!.isNotEmpty) {
-      final m = RegExp(r'^(.*)<\s*([^>]+)\s*>$').firstMatch(fromHeader!);
+    if (fromHeader != null && fromHeader.isNotEmpty) {
+      final m = RegExp(r'^(.*)<\s*([^>]+)\s*>$').firstMatch(fromHeader);
       if (m != null) {
         fromName = (m.group(1) ?? '').trim().replaceAll('"', '');
         fromEmail = (m.group(2) ?? '').trim().toLowerCase();
         if (fromName.isEmpty) fromName = fromEmail;
       } else {
-        // "addr@ex.com" のみ
-        fromEmail = fromHeader!.trim().toLowerCase();
+        fromEmail = fromHeader.trim().toLowerCase();
         fromName = fromEmail;
       }
     }
 
-    // 一覧に出す簡易時刻文字列（細かいローカライズはUI側で）
     String timeStr = '';
     if (date != null) {
       timeStr =
-          '${date.year}/${date.month}/${date.day} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+      '${date.year}/${date.month}/${date.day} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     }
 
     return {
       'id': data['id'],
       'threadId': data['threadId'],
-      'from': fromName, // 表示名
-      'fromEmail': fromEmail, // メールアドレス（左右判定に有用）
+      'from': fromName,
+      'fromEmail': fromEmail,
       'snippet': data['snippet'] ?? '',
-      'time': timeStr, // 一覧用の文字列
-      'timeDt': date, // DateTime（並び替え/同分判定などに）
+      'time': timeStr,
+      'timeDt': date,
+      'subject': subject, // 件名
+      'messageIdHeader': messageIdHeader, // 返信用ID
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // スレッド一覧 + 各スレッドの最新メッセージのサマリ
-  // - query を渡すと Gmail 側で検索（q=...）
-  // - ページングも吸収（nextPageToken）
-  // ---------------------------------------------------------------------------
+
   Future<List<Map<String, dynamic>>> fetchThreads({
     String? query, // 例：'from:a@x OR from:b@x newer_than:30d'
     int maxResults = 20, // list 1回の取得上限（Gmailの page size）
@@ -332,70 +335,105 @@ class GmailService {
     return map;
   }
 
-  // ---------------------------------------------------------------------------
-  // 送信元の“メッセージ一覧”を取得（PersonChat 用：LINE風トーク画面）
-  // - Gmail の messages.list に q=from:sender を渡す
-  // - 各メッセージを _getMessageSummary で軽量取得して時系列昇順で返す
-  // ---------------------------------------------------------------------------
-  Future<List<Map<String, dynamic>>> fetchMessagesBySender(
-    String senderEmail, {
-    String? newerThan, // 例: '6m'
-    int maxResults = 50, // list 1回の取得上限
-    int limit = 300, // 取得総数の上限（無限に取らない安全装置）
-  }) async {
+
+  Future<Map<String, dynamic>> fetchMessagesByThread(String threadId) async {
     final t = await _token();
-    if (t == null) return [];
+    if (t == null) return {};
 
-    final email = senderEmail.trim().toLowerCase();
-    if (email.isEmpty) return [];
+    // 1回のAPIコールで、必要なヘッダー情報をすべて取得する
+    final uri = Uri.parse(
+        '$_base/threads/$threadId'
+            '?format=metadata'
+            '&metadataHeaders=From'
+            '&metadataHeaders=Date'
+            '&metadataHeaders=Subject'      // ★件名
+            '&metadataHeaders=Message-ID'  // ★返信ヘッダ用
+            '&metadataHeaders=References'  // ★返信ヘッダ用
+    );
 
-    // q を作成（例：'(from:a@x) newer_than:6m'）
-    String q = 'from:$email';
-    if (newerThan != null && newerThan.trim().isNotEmpty) {
-      q = '($q) newer_than:${newerThan.trim()}';
+    final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
+    if (res.statusCode != 200) {
+      throw Exception('Failed to fetch thread details: ${res.body}');
     }
 
-    final out = <Map<String, dynamic>>[];
-    String? pageToken;
+    final data = json.decode(res.body) as Map<String, dynamic>;
+    final messagesData = (data['messages'] as List? ?? []).cast<Map<String, dynamic>>();
 
-    while (out.length < limit) {
-      final params = <String, String>{
-        'q': q,
-        'maxResults': '$maxResults',
-        if (pageToken != null) 'pageToken': pageToken!,
-      };
-      final listUri = Uri.parse(
-        '$_base/messages',
-      ).replace(queryParameters: params);
-
-      final listRes = await http.get(
-        listUri,
-        headers: {'Authorization': 'Bearer $t'},
-      );
-      if (listRes.statusCode != 200) {
-        throw Exception(
-          'messages.list failed: ${listRes.statusCode} ${listRes.body}',
-        );
-      }
-
-      final listData = json.decode(listRes.body) as Map<String, dynamic>;
-      final ids = (listData['messages'] as List? ?? [])
-          .cast<Map>()
-          .map((m) => m['id'] as String)
-          .toList();
-
-      for (final id in ids) {
-        if (out.length >= limit) break;
-        final summary = await _getMessageSummary(id);
-        if (summary.isNotEmpty) out.add(summary);
-      }
-
-      pageToken = listData['nextPageToken'] as String?;
-      if (pageToken == null) break; // 次ページが無ければ終了
+    // メッセージがなければ空の情報を返す
+    if (messagesData.isEmpty) {
+      return {'messages': [], 'subject': '', 'lastMessageIdHeader': '', 'referencesHeader': ''};
     }
 
-    // バブル表示では「古い→新しい」の昇順が自然
-    out.sort((a, b) {
+    // --- 各メッセージをサマリーに変換 ---
+    // APIレスポンスを直接パースするため、追加のAPIコールは発生しない
+    final summaries = <Map<String, dynamic>>[];
+    for (final msgData in messagesData) {
+      final internalMs = int.tryParse('${msgData['internalDate'] ?? ''}');
+      final date = internalMs != null ? DateTime.fromMillisecondsSinceEpoch(internalMs, isUtc: true).toLocal() : null;
+
+      String fromHeader = '';
+      final headers = (msgData['payload']?['headers'] as List? ?? []).cast<Map<String, dynamic>>();
+      for (final h in headers) {
+        if ((h['name'] ?? '').toString().toLowerCase() == 'from') {
+          fromHeader = (h['value'] ?? '').toString();
+          break;
+        }
+      }
+
+      String fromName = '(unknown)';
+      String fromEmail = '';
+      if (fromHeader.isNotEmpty) {
+        final m = RegExp(r'^(.*)<\s*([^>]+)\s*>$').firstMatch(fromHeader);
+        if (m != null) {
+          fromName = (m.group(1) ?? '').trim().replaceAll('"', '');
+          fromEmail = (m.group(2) ?? '').trim().toLowerCase();
+          if (fromName.isEmpty) fromName = fromEmail;
+        } else {
+          fromEmail = fromHeader.trim().toLowerCase();
+          fromName = fromEmail;
+        }
+      }
+
+      String timeStr = '';
+      if (date != null) {
+        timeStr = '${date.year}/${date.month}/${date.day} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+      }
+
+      summaries.add({
+        'id': msgData['id'],
+        'threadId': msgData['threadId'],
+        'from': fromName,
+        'fromEmail': fromEmail,
+        'snippet': msgData['snippet'] ?? '',
+        'time': timeStr,
+        'timeDt': date,
+      });
+    }
+
+    // --- スレッド全体の情報を抽出 ---
+    String subject = '';
+    final firstMsgHeaders = (messagesData.first['payload']?['headers'] as List? ?? []).cast<Map<String, dynamic>>();
+    for (final h in firstMsgHeaders) {
+      if ((h['name'] ?? '').toString().toLowerCase() == 'subject') {
+        subject = (h['value'] ?? '').toString();
+        break;
+      }
+    }
+
+    String lastMessageIdHeader = '';
+    String referencesHeader = '';
+    final lastMsgHeaders = (messagesData.last['payload']?['headers'] as List? ?? []).cast<Map<String, dynamic>>();
+    for (final h in lastMsgHeaders) {
+      final name = (h['name'] ?? '').toString().toLowerCase();
+      if (name == 'message-id') {
+        lastMessageIdHeader = (h['value'] ?? '').toString();
+      } else if (name == 'references') {
+        referencesHeader = (h['value'] ?? '').toString();
+      }
+    }
+
+    // --- 時系列ソート ---
+    summaries.sort((a, b) {
       final da = a['timeDt'] as DateTime?;
       final db = b['timeDt'] as DateTime?;
       if (da == null && db == null) return 0;
@@ -404,8 +442,16 @@ class GmailService {
       return da.compareTo(db);
     });
 
-    return out;
+    // ★返り値をMapに変更
+    return {
+      'messages': summaries,          // メッセージのサマリーリスト
+      'subject': subject,               // スレッドの件名
+      'lastMessageIdHeader': lastMessageIdHeader, // 返信用の最新Message-ID
+      'referencesHeader': referencesHeader,   // 返信用の参照ヘッダー
+    };
   }
+
+// ... GmailService クラスの他のメソッドはそのまま ...
   // gmail_service.dart（GmailService クラスの中に追記）
 
   /// 1通を既読にする（UNREADラベルを外す）
@@ -506,42 +552,5 @@ class GmailService {
       );
     }
     return ids.length;
-  }
-  // gmail_service.dart の GmailService クラスの中に追加
-
-  Future<List<Map<String, dynamic>>> fetchMessagesByThread(String threadId) async {
-    final t = await _token();
-    if (t == null) return [];
-
-    final uri = Uri.parse('$_base/threads/$threadId?format=full');
-    final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
-
-    if (res.statusCode != 200) {
-      throw Exception('Failed to fetch thread details: ${res.body}');
-    }
-
-    final data = json.decode(res.body) as Map<String, dynamic>;
-    final messagesData = (data['messages'] as List? ?? []).cast<Map<String, dynamic>>();
-
-    // 既存の _getMessageSummary を再利用してサマリ情報を取得
-    final summaries = <Map<String, dynamic>>[];
-    for (final msgData in messagesData) {
-      final summary = await _getMessageSummary(msgData['id'] as String);
-      if (summary.isNotEmpty) {
-        summaries.add(summary);
-      }
-    }
-
-    // 時系列（古い順）にソート
-    summaries.sort((a, b) {
-      final da = a['timeDt'] as DateTime?;
-      final db = b['timeDt'] as DateTime?;
-      if (da == null && db == null) return 0;
-      if (da == null) return -1;
-      if (db == null) return 1;
-      return da.compareTo(db);
-    });
-
-    return summaries;
   }
 }
