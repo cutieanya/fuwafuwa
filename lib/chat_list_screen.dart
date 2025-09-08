@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
-import 'person_chat_screen.dart'; // 相手ごとのトーク画面
+import 'chat_screen.dart'; // 相手ごとのトーク画面
 import 'gmail_service.dart'; // fetchThreadsBySenders / countUnreadBySenders
 import 'lobby_page.dart';
 
@@ -405,13 +405,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                             ],
                           ),
                           onTap: () {
-                            if (chat.senderEmail.isEmpty) return;
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => PersonChatScreen(
-                                  senderEmail: chat.senderEmail,
-                                  title: chat.name,
+                                builder: (_) => ChatScreen(
+                                  threadId: chat.threadId,
                                 ),
                               ),
                             );

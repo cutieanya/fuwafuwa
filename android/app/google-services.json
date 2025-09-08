@@ -38,6 +38,14 @@
           }
         },
         {
+          "client_id": "524871713161-vmh1ipmd0iehnhq2qmvhj123n36f5gt7.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.fuwafuwa",
+            "certificate_hash": "aea1de00099d11462fdd0e9115d7a39aa089a80a"
+          }
+        },
+        {
           "client_id": "524871713161-vdglgtc1r1tgvjnogsjk2l8v888tdqle.apps.googleusercontent.com",
           "client_type": 3
         }
@@ -55,10 +63,46 @@
               "client_type": 3
             },
             {
-              "client_id": "524871713161-vlo1mbg9lj63a9j9vfenbf6rv8ugiohg.apps.googleusercontent.com",
+              "client_id": "524871713161-rjai0iii8cnot16otr11g2ohf3hgi5ht.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.example.fuwafuwa"
+                "bundle_id": "com.example.giragiramap"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:524871713161:android:a12219b5d3582d66022158",
+        "android_client_info": {
+          "package_name": "com.example.giragiramap"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "524871713161-vdglgtc1r1tgvjnogsjk2l8v888tdqle.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBIuNZZCn7tMFHl5dFuKabytyJwQJaGa4k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "524871713161-sgjltt6rbfg9kk1l8v6c9uc7lc1et9l3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "524871713161-rjai0iii8cnot16otr11g2ohf3hgi5ht.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.giragiramap"
               }
             }
           ]
