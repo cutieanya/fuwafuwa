@@ -2,8 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import 'chat_list_screen.dart';
-import 'sign_up_page.dart';
+import '../../../chat_list_screen.dart';
+import '../../../sign_up_page.dart';
 import 'google_sign_in_page.dart'; // ← Google ログイン画面（SignInTest を想定）
 
 class LobbyPage extends StatelessWidget {

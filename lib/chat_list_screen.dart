@@ -4,8 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'person_chat_screen.dart'; // 相手ごとのトーク画面
-import 'gmail_service.dart'; // fetchThreadsBySenders / countUnreadBySenders
-import 'lobby_page.dart';
+import 'features/auth/services/gmail_service.dart'; // fetchThreadsBySenders / countUnreadBySenders
+import 'features/auth/view/lobby_page.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});

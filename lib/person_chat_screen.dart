@@ -1,6 +1,6 @@
 // person_chat_screen.dart
 import 'package:flutter/material.dart';
-import 'gmail_service.dart';
+import 'features/auth/services/gmail_service.dart';
 import 'chat_bubble.dart'; // 既存のバブルWidget
 
 class PersonChatScreen extends StatefulWidget {
