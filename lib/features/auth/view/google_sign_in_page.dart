@@ -1,49 +1,24 @@
-import 'dart:async';
+// lib/features/auth/view/google_sign_in_page.dart
 import 'package:flutter/material.dart';
-
-// ▼ v5方式で使うGoogle Sign-In
 import 'package:google_sign_in/google_sign_in.dart';
-
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../../firebase_options.dart'; // flutterfire configure で生成
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class GoogleSignInPage extends StatefulWidget {
+  const GoogleSignInPage({super.key});
   @override
-  Widget build(BuildContext context) {
-    return const MaterialApp(title: 'Google Sign-In Test', home: SignInTest());
-  }
+  State<GoogleSignInPage> createState() => _GoogleSignInPageState();
 }
 
-class SignInTest extends StatefulWidget {
-  const SignInTest({super.key});
-  @override
-  State<SignInTest> createState() => _SignInTestState();
-}
-
-class _SignInTestState extends State<SignInTest> {
-  // ==============================================================
-  // v5 方式：自前のインスタンスを持つ（← v6 の GoogleSignIn.instance ではない）
-  // Gmail を読むための scope をここで宣言しておく（後でGmail APIで利用）
-  // ==============================================================
+class _GoogleSignInPageState extends State<GoogleSignInPage> {
   final GoogleSignIn _gsi = GoogleSignIn(
     scopes: const [
       'email',
-      'https://www.googleapis.com/auth/gmail.readonly', // Gmail読み取り
+      // 'https://www.googleapis.com/auth/gmail.readonly', // Gmailも読むなら追加
     ],
   );
 
   bool _loading = false;
   String? _message;
-
-  // v6の initialize() / authenticationEvents は不要（v5では存在しないため）
 
   Future<void> _signIn() async {
     setState(() {
@@ -51,72 +26,59 @@ class _SignInTestState extends State<SignInTest> {
       _message = null;
     });
     try {
-      // ==========================================================
-      // v5 のサインイン：ここでGoogle側のUIが出る
-      // 成功すると GoogleSignInAccount が返る（nullならキャンセル）
-      // ==========================================================
-      final GoogleSignInAccount? googleUser = await _gsi.signIn();
-      if (googleUser == null) {
-        if (!mounted) return;
+      final account = await _gsi.signIn();
+      if (account == null) {
         setState(() => _message = 'キャンセルされました');
         return;
       }
-
-      // ==========================================================
-      // v5 では Google の OAuth トークンがここで取れる
-      // ・idToken：Firebase Auth 連携に使用
-      // ・accessToken：Gmail REST API への Bearer に使用（後でgmail_service.dartで使う）
-      // ==========================================================
-      final googleAuth = await googleUser.authentication;
-
-      // FirebaseAuth 用の credential に変換してログイン
-      final credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-        accessToken: googleAuth.accessToken, // ★ v5 でのみ取得可
+      final tokens = await account.authentication;
+      final cred = GoogleAuthProvider.credential(
+        idToken: tokens.idToken,
+        accessToken: tokens.accessToken,
       );
-      await FirebaseAuth.instance.signInWithCredential(credential);
+      await FirebaseAuth.instance.signInWithCredential(cred);
 
-      if (!mounted) return;
       final u = FirebaseAuth.instance.currentUser;
       setState(() {
         _message = 'サインイン成功：${u?.displayName ?? u?.email ?? "No name"}';
       });
     } catch (e) {
-      if (!mounted) return;
       setState(() {
         _message = 'Sign-in error: $e';
       });
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+      });
     }
   }
 
   Future<void> _signOut() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+    });
     try {
       await FirebaseAuth.instance.signOut();
-      await _gsi.signOut(); // v5 のサインアウト
-      if (!mounted) return;
+      await _gsi.signOut();
       setState(() {
         _message = 'サインアウトしました';
       });
     } catch (e) {
-      if (!mounted) return;
       setState(() {
         _message = 'Sign-out error: $e';
       });
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final firebaseUser = FirebaseAuth.instance.currentUser;
+    final user = FirebaseAuth.instance.currentUser;
     return Scaffold(
-      appBar: AppBar(title: const Text('Google Sign-In Test')),
+      appBar: AppBar(title: const Text('Google Sign-In')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -124,24 +86,30 @@ class _SignInTestState extends State<SignInTest> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (_loading) const CircularProgressIndicator(),
-              if (!_loading && firebaseUser == null)
+              if (!_loading && user == null)
+                SizedBox(
+                  width: 260,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.g_translate),
+                    label: const Text('Continue with Google'),
+                    onPressed: _signIn,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(48),
+                      shape: const StadiumBorder(),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              if (!_loading && user != null) ...[
+                Text('現在のユーザー: ${user.displayName ?? user.email ?? "No name"}'),
+                const SizedBox(height: 8),
                 ElevatedButton(
-                  onPressed: _signIn,
-                  child: const Text('Sign in with Google'),
+                  onPressed: _signOut,
+                  child: const Text('Sign out'),
                 ),
-              if (!_loading && firebaseUser != null)
-                Column(
-                  children: [
-                    Text(
-                      '現在のユーザー: ${firebaseUser.displayName ?? firebaseUser.email ?? "No name"}',
-                    ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: _signOut,
-                      child: const Text('Sign out'),
-                    ),
-                  ],
-                ),
+              ],
               const SizedBox(height: 12),
               if (_message != null) Text(_message!),
             ],
@@ -150,4 +118,4 @@ class _SignInTestState extends State<SignInTest> {
       ),
     );
   }
-} 
+}

@@ -92,7 +92,9 @@ class LobbyPage extends StatelessWidget {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const SignInTest()),
+                        MaterialPageRoute(
+                          builder: (_) => const GoogleSignInPage(),
+                        ),
                       );
                     },
                     label: const Text('Googleでログイン'), // ← label に統一

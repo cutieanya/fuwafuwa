@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:fuwafuwa/features/auth/view/lobby_page.dart';
+// import 'package:fuwafuwa/features/auth/view/lobby_page.dart';
+import 'package:fuwafuwa/features/auth/view/first_screen.dart';
 // firebase firebaseCoreプラグインと以前に生成した構成ファイルをインポート
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
@@ -22,7 +23,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       // 最初に表示する画面として、さっき作ったChatListScreenを指定
-      home: const LobbyPage(),
+      home: const LoginScreen(),
     );
   }
 }
