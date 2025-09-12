@@ -23,7 +23,7 @@ class BlurredColorCyclingBlob extends StatefulWidget {
       ui.Color.fromARGB(255, 16, 125, 20), // Green
       ui.Color.fromARGB(255, 20, 23, 187), // Blue
     ],
-    this.duration = const Duration(seconds: 16), // 一周の時間
+    this.duration = const Duration(seconds: 8), // 一周の時間
   });
 
   final double size;
@@ -235,9 +235,9 @@ class _LoginScreenState extends State<LoginScreen> {
           // 左下：色がゆっくり循環する“発光の丸”
           const Positioned.fill(
             child: BlurredColorCyclingBlob(
-              size: 400,
+              size: 1000,
               alignment: Alignment.bottomLeft,
-              offset: Offset(-70, 80),
+              offset: Offset(-100, 320),
               blurSigma: 100,
               opacity: 0.9,
             ),
@@ -246,17 +246,17 @@ class _LoginScreenState extends State<LoginScreen> {
           const Positioned.fill(
             child: BlurredCornerImage(
               asset: 'assets/images/spring.png',
-              size: 800,
+              size: 1000,
               alignment: Alignment.topRight,
-              offset: Offset(120, -80),
-              blurSigma: 20,
+              offset: Offset(100, -80),
+              blurSigma: 15,
               opacity: 0.9,
             ),
           ),
 
           Positioned(
             left: 24,
-            top: 24,
+            top: 56,
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.only(top: 32), // ← ここで「少し下げる」
@@ -281,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               letterSpacing: 0,
                               foreground: Paint()
                                 ..style = PaintingStyle.stroke
-                                ..strokeWidth = 3.0
+                                ..strokeWidth = 1.0
                                 ..color = Colors.black,
                             ),
                           ),
@@ -308,7 +308,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         style: const TextStyle(
                           fontFamily: 'Inter',
                           fontSize: 20,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w400,
                           color: Colors.black,
                         ),
                       ),
@@ -316,11 +316,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     Padding(
                       padding: const EdgeInsets.only(left: 8),
                       child: Text(
-                        'Manage mail',
+                        'Manage your mail',
                         style: const TextStyle(
                           fontFamily: 'Inter',
                           fontSize: 20,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w400,
                           color: Colors.black,
                         ),
                       ),
@@ -333,7 +333,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
           // 左下：黒い「Sign in」ボタン（Googleアイコン付き）
           Positioned(
-            left: 40,
+            left: 32,
             bottom: 60,
             child: SafeArea(
               child: ElevatedButton.icon(
