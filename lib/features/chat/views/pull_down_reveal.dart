@@ -21,7 +21,6 @@ class PullDownReveal extends StatefulWidget {
 class _PullDownRevealState extends State<PullDownReveal> {
   final _controller = DraggableScrollableController();
   double _radius = 0;
-  bool _isOpen = true; // ほぼ全開かどうか
 
   @override
   void initState() {
@@ -29,10 +28,7 @@ class _PullDownRevealState extends State<PullDownReveal> {
     _controller.addListener(() {
       final size = _controller.size; // 1.0(全画面) → minChildSize(引っ張り時)
       final t = ((1.0 - size) / (1.0 - widget.minChildSize)).clamp(0.0, 1.0);
-      setState(() {
-        _radius = 28 * t; // 引っ張るほど角丸が大きくなる
-        _isOpen = size >= 0.999; // ほぼ全開の判定
-      });
+      setState(() => _radius = 28 * t); // 引っ張るほど角丸が大きくなる
     });
   }
 
@@ -62,11 +58,7 @@ class _PullDownRevealState extends State<PullDownReveal> {
           minChildSize: widget.minChildSize,
           expand: true,
           snap: true,
-          // ← 閉(=min)と開(=1.0)の両方へスナップ
-          snapSizes: const <double>[], // Flutterの古い版でエラーになる場合は [] に
-          // ↑ 最新版なら [widget.minChildSize, 1.0] を使いたいが const 制約があるため、
-          //   問題なければ下のように書き換えてOK：
-          // snapSizes: [widget.minChildSize, 1.0],
+          snapSizes: const [1.0],
           builder: (context, scrollController) {
             return Container(
               clipBehavior: Clip.hardEdge,
@@ -76,31 +68,19 @@ class _PullDownRevealState extends State<PullDownReveal> {
               ),
               child: CustomScrollView(
                 controller: scrollController,
-                // ← 全開じゃない間は中身をスクロール不可にして
-                //    上スワイプがシートに伝わるようにする
-                physics: _isOpen
-                    ? const BouncingScrollPhysics()
-                    : const NeverScrollableScrollPhysics(),
+                physics: const BouncingScrollPhysics(),
                 slivers: [
                   SliverToBoxAdapter(
                     child: Column(
                       children: [
                         if (widget.handle) ...[
                           const SizedBox(height: 12),
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => _controller.animateTo(
-                              1.0,
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOut,
-                            ),
-                            child: Container(
-                              width: 64,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE0E0E0),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
+                          Container(
+                            width: 64,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0E0E0),
+                              borderRadius: BorderRadius.circular(4),
                             ),
                           ),
                           const SizedBox(height: 8),
