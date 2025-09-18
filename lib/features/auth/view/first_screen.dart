@@ -5,7 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 // ← プロジェクト構成に合わせて調整してください
-import 'package:fuwafuwa/features/auth/view/lobby_page.dart';
+import 'package:fuwafuwa/features/chat/views/chat_list_screen.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 /// 左下など任意位置に“丸い発光”を置き、色を循環させる背景ウィジェット
@@ -201,9 +201,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
       // 成功 → チャット（ロビー）へ
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const LobbyPage()));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const ChatListScreen()),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

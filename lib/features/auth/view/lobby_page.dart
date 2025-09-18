@@ -2,9 +2,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import '../../../chat_list_screen.dart';
-import '../../../sign_up_page.dart';
-import 'google_sign_in_page.dart'; // ← Google ログイン画面（SignInTest を想定）
+import 'package:fuwafuwa/features/chat/views/chat_list_screen.dart';
+import 'package:fuwafuwa/features/auth/view/sign_up_page.dart';
+import 'package:fuwafuwa/features/chat/views/chatlist_beta.dart';
+import 'package:fuwafuwa/features/auth/view/google_sign_in_page.dart'; // ← Google ログイン画面（SignInTest を想定）
 
 class LobbyPage extends StatelessWidget {
   const LobbyPage({super.key});
@@ -121,6 +122,24 @@ class LobbyPage extends StatelessWidget {
                             );
                           },
                     label: const Text('チャット画面に進む'), // ← label に統一
+                  ),
+                ),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.chat_bubble_outline),
+                    onPressed: user == null
+                        ? null
+                        : () {
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ChatBetaScreen(),
+                              ),
+                            );
+                          },
+                    label: const Text('チャット画面betaに進む'), // ← label に統一
                   ),
                 ),
 

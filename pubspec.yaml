@@ -44,6 +44,7 @@ dependencies:
   flutter_svg: ^1.1.6
   rive: ^0.13.20
   font_awesome_flutter: ^10.9.1
+  curved_navigation_bar: ^1.0.6
 
 dev_dependencies:
   flutter_test:
