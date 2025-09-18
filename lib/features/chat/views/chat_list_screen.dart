@@ -6,7 +6,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:fuwafuwa/features/chat/views/person_chat_screen.dart';
-import 'package:fuwafuwa/features/auth/services/gmail_service.dart';
+import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
 import '../../auth/view/lobby_page.dart';
 
 class ChatListScreen extends StatefulWidget {

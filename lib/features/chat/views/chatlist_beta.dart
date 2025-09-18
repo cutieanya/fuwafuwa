@@ -14,7 +14,7 @@ class ChatBetaScreen extends StatelessWidget {
         children: [
           Expanded(
             child: PullDownReveal(
-              minChildSize: 0.86,
+              minChildSize: 0.8, //どれだけ引っ張ったら見えるか
               handle: false,
               backBar: const _AccountsBar(),
               frontBuilder: (scroll) {
@@ -124,26 +124,25 @@ class ChatBetaScreen extends StatelessWidget {
 }
 
 class _AccountsBar extends StatelessWidget {
-  const _AccountsBar({super.key, this.height = 240, this.iconRadius = 26});
+  const _AccountsBar({super.key, this.iconRadius = 32});
 
-  final double height;
   final double iconRadius;
 
   @override
   Widget build(BuildContext context) {
-    final r = iconRadius; // ← 丸アイコン半径
+    final r = iconRadius;
 
     return Container(
-      height: height,
+      height: 320, // 👈 この値を変更
       color: Colors.black,
-      padding: const EdgeInsets.only(top: 4, left: 12, right: 12), // 上寄せ
+      padding: const EdgeInsets.only(top: 0, left: 12, right: 12),
       child: Align(
         alignment: Alignment.topLeft,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _round(r, const Icon(Icons.add, size: 24, color: Colors.black)),
+              _round(r, const Icon(Icons.add, size: 28, color: Colors.black)),
               const SizedBox(width: 12),
               _round(
                 r,
@@ -172,7 +171,6 @@ class _AccountsBar extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               _round(r, const Icon(Icons.star, size: 24, color: Colors.black)),
-              // ...追加
             ],
           ),
         ),

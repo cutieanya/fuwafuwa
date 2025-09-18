@@ -123,7 +123,7 @@ class BlurredCornerImage extends StatelessWidget {
   const BlurredCornerImage({
     super.key,
     required this.asset,
-    this.size = 420,
+    this.size = 500,
     this.alignment = Alignment.topRight, // 右上
     this.offset = const Offset(30, 10), // 少し内側＆下へ
     this.opacity = 0.85,
