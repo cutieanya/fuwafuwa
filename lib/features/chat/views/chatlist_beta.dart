@@ -5,12 +5,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-import 'package:fuwafuwa/features/chat/views/person_chat_screen.dart'; // 必要に応じてパスを修正
-import 'package:fuwafuwa/features/chat/services/gmail_service.dart'; // GmailService のインポート
-import 'package:fuwafuwa/features/auth/view/lobby_page.dart'; // LobbyPage のインポート
+import 'package:fuwafuwa/features/chat/views/person_chat_screen.dart';
+import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
 import 'pull_down_reveal.dart';
 
-// --- データのモデルクラス（元のファイルから） ---
+// ----------------- モデル -----------------
 class Chat {
   final String threadId;
   final String name;
@@ -18,7 +17,6 @@ class Chat {
   final String time;
   final String avatarUrl;
   final String senderEmail;
-
   Chat({
     required this.threadId,
     required this.name,
@@ -33,7 +31,6 @@ class _LinkedAccount {
   final String email;
   final String displayName;
   final String photoUrl;
-
   const _LinkedAccount({
     required this.email,
     required this.displayName,
@@ -41,18 +38,15 @@ class _LinkedAccount {
   });
 }
 
-// --- StatefulWidget に変更 ---
+// -------------- 画面本体 -----------------
 class ChatBetaScreen extends StatefulWidget {
   const ChatBetaScreen({super.key});
-
   @override
   State<ChatBetaScreen> createState() => _ChatBetaScreenState();
 }
 
 class _ChatBetaScreenState extends State<ChatBetaScreen> {
   final _service = GmailService();
-  final _addrController = TextEditingController();
-
   final GoogleSignIn _gsi = GoogleSignIn(
     scopes: const [
       'email',
@@ -62,14 +56,33 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     ],
   );
 
+  /// 選択中のアカウントメール（null = All）
   String? _activeAccountEmail;
 
-  // ===== Firestore パス =====
+  // ---------- 起動時：サイレントサインインで現在セッションを反映 ----------
+  @override
+  void initState() {
+    super.initState();
+    _bootstrapSignIn();
+  }
+
+  Future<void> _bootstrapSignIn() async {
+    try {
+      final acc = await _gsi.signInSilently();
+      if (!mounted) return;
+      setState(() {
+        _activeAccountEmail = acc?.email.toLowerCase();
+      });
+    } catch (_) {
+      // 失敗しても無視（Allとして動かす）
+    }
+  }
+
+  // ---------- Firestore パス ----------
   DocumentReference<Map<String, dynamic>> get _filtersDoc {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
-      // 実際にはログインページに遷移させるべきですが、今回はエラーを投げます
-      throw StateError('未ログインです。LobbyPage からログインしてから遷移してください。');
+      throw StateError('未ログインです。ログイン後に再度お試しください。');
     }
     return FirebaseFirestore.instance
         .collection('users')
@@ -81,7 +94,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   DocumentReference<Map<String, dynamic>> get _accountsDoc {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
-      throw StateError('未ログインです。LobbyPage からログインしてから遷移してください。');
+      throw StateError('未ログインです。ログイン後に再度お試しください。');
     }
     return FirebaseFirestore.instance
         .collection('users')
@@ -90,13 +103,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         .doc('accounts');
   }
 
-  @override
-  void dispose() {
-    _addrController.dispose();
-    super.dispose();
-  }
-
-  // ---------- Firestore (filters) ----------
+  // ---------- Filters ----------
   Stream<Set<String>> _streamAllowedSenders() {
     return _filtersDoc.snapshots().map((snap) {
       final list =
@@ -128,7 +135,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }, SetOptions(merge: true));
   }
 
-  // ---------- Firestore (linked Google accounts) ----------
+  // ---------- Linked Accounts ----------
   Stream<List<_LinkedAccount>> _streamLinkedAccounts() {
     return _accountsDoc.snapshots().map((snap) {
       final raw = (snap.data()?['linked'] as List?) ?? const [];
@@ -148,8 +155,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
 
   Future<void> _linkGoogleAccount() async {
     try {
-      final account = await _gsi.signIn();
-      if (account == null) return;
+      final account = await _gsi.signIn(); // 追加は対話的でOK
+      if (account == null) return; // キャンセル
       await _accountsDoc.set({
         'linked': FieldValue.arrayUnion([
           {
@@ -161,11 +168,13 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         ]),
       }, SetOptions(merge: true));
 
-      setState(() => _activeAccountEmail = account.email.toLowerCase());
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('アカウントを追加しました：${account.email}')));
+
+      // 初回などAllのままでも良いが、UX的に選択をそのアカウントへ寄せたいなら↓
+      setState(() => _activeAccountEmail ??= account.email.toLowerCase());
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -174,28 +183,35 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
   }
 
+  /// アカウント切替：signOutは**しない**。まずサイレント、必要時のみ対話的サインイン。
   Future<void> _switchToAccount(String? email) async {
-    setState(() => _activeAccountEmail = email);
+    setState(() => _activeAccountEmail = email); // null = All
 
-    if (email == null) return;
+    if (email == null) {
+      // All は現在のセッションを使う（将来: 複数トークン保持で横断取得）
+      return;
+    }
 
-    try {
-      await _gsi.signOut();
-      final account = await _gsi.signIn();
-      if (account == null) return;
-      if (account.email.toLowerCase() != email.toLowerCase()) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('選択と異なるため、${account.email} を使用します')),
-        );
-        setState(() => _activeAccountEmail = account.email.toLowerCase());
-      }
-    } catch (e) {
-      if (!mounted) return;
+    // 既に希望のメールでサインイン済みなら何もしない
+    final cur = await _gsi.signInSilently();
+    if (cur != null && cur.email.toLowerCase() == email.toLowerCase()) {
+      return;
+    }
+
+    // サイレントで無理 → 対話的に
+    final acc = await _gsi.signIn();
+    if (acc == null) return; // キャンセル
+    if (!mounted) return;
+
+    if (acc.email.toLowerCase() != email.toLowerCase()) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('切替に失敗: $e')));
+      ).showSnackBar(SnackBar(content: Text('選択と異なるため、${acc.email} を使用します')));
+      setState(() => _activeAccountEmail = acc.email.toLowerCase());
     }
+
+    // ※ GmailService がトークンをキャッシュしている場合はここで再初期化が必要
+    // 例: _service.refreshAuth(await _gsi.currentUser?.authHeaders);
   }
 
   // ---------- Gmail 取得 ----------
@@ -208,6 +224,17 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       limit: 200,
     );
     return _dedupBySender(list);
+  }
+
+  /// All のときに将来は複数アカウント横断で集約する想定。
+  /// いまは現在の GoogleSignIn セッション分のみ取得。
+  Future<List<Map<String, dynamic>>> _loadChatsUnified(
+    Set<String> senders,
+    List<_LinkedAccount> _linked,
+  ) async {
+    // TODO: 連携済み各アカウントの有効トークンを保持できるようにしたら、
+    // ここで順に取得→マージ→ソートして返す。
+    return _loadChatsFor(senders);
   }
 
   Future<Map<String, int>> _loadUnreadCounts(Set<String> senders) {
@@ -248,8 +275,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
     final list = bySender.values.toList();
     list.sort((a, b) {
-      final da = a['timeDt'] is DateTime ? a['timeDt'] as DateTime : null;
-      final db = b['timeDt'] is DateTime ? b['timeDt'] as DateTime : null;
+      final da = a['timeDt'] as DateTime?;
+      final db = b['timeDt'] as DateTime?;
       if (da == null && db == null) return 0;
       if (da == null) return 1;
       if (db == null) return -1;
@@ -343,16 +370,28 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     );
   }
 
+  _LinkedAccount? _currentUserAsLinked() {
+    final u = FirebaseAuth.instance.currentUser;
+    if (u == null || (u.email ?? '').isEmpty) return null;
+    return _LinkedAccount(
+      email: (u.email ?? '').toLowerCase(),
+      displayName: u.displayName ?? '',
+      photoUrl: u.photoURL ?? '',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).padding.bottom;
     final cs = Theme.of(context).colorScheme;
+    final currentAsLinked = _currentUserAsLinked();
 
     return Scaffold(
       body: Column(
         children: [
           Expanded(
             child: PullDownReveal(
+              // PullDownReveal の引数は既存のまま
               minChildSize: 0.8,
               handle: false,
               backBar: _AccountsBar(
@@ -360,13 +399,14 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                 activeAccountEmail: _activeAccountEmail,
                 switchToAccount: _switchToAccount,
                 linkGoogleAccount: _linkGoogleAccount,
+                currentUser: currentAsLinked, // 現在ログイン中も表示
               ),
               frontBuilder: (scroll) {
                 return CustomScrollView(
                   controller: scroll,
                   physics: const BouncingScrollPhysics(),
                   slivers: [
-                    // ヘッダー：左「Chat」右「Edit」(黒丸ボタン)
+                    // ヘッダー
                     SliverToBoxAdapter(
                       child: SafeArea(
                         bottom: false,
@@ -382,24 +422,21 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                 ),
                               ),
                               const Spacer(),
-                              Tooltip(
-                                message: 'Edit',
-                                child: InkWell(
-                                  onTap: () {},
-                                  customBorder: const CircleBorder(),
-                                  child: Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: const BoxDecoration(
-                                      color: Colors.black,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: const Icon(
-                                      Icons.edit_outlined,
-                                      size: 30,
-                                      color: Colors.white,
-                                    ),
+                              InkWell(
+                                onTap: () {},
+                                customBorder: const CircleBorder(),
+                                child: Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: const Icon(
+                                    Icons.edit_outlined,
+                                    size: 30,
+                                    color: Colors.white,
                                   ),
                                 ),
                               ),
@@ -408,6 +445,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                         ),
                       ),
                     ),
+
+                    // 検索ボタン
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
@@ -429,148 +468,170 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                         ),
                       ),
                     ),
-                    // チャットリスト
-                    StreamBuilder<Set<String>>(
-                      stream: _streamAllowedSenders(),
-                      builder: (context, snapshot) {
-                        if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                          return const SliverFillRemaining(
-                            child: Center(child: Text('表示したい送信元アドレスを追加してください')),
-                          );
-                        }
-                        final allowedSenders = snapshot.data!;
 
-                        return FutureBuilder<List<Map<String, dynamic>>>(
-                          future: _loadChatsFor(allowedSenders),
-                          builder: (context, futureSnapshot) {
-                            if (futureSnapshot.connectionState ==
-                                ConnectionState.waiting) {
+                    // チャットリスト（All/個別の状態に対応）
+                    StreamBuilder<List<_LinkedAccount>>(
+                      stream: _streamLinkedAccounts(),
+                      builder: (context, accSnap) {
+                        final linked = accSnap.data ?? const <_LinkedAccount>[];
+                        return StreamBuilder<Set<String>>(
+                          stream: _streamAllowedSenders(),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData || snapshot.data!.isEmpty) {
                               return const SliverFillRemaining(
                                 child: Center(
-                                  child: CircularProgressIndicator(),
+                                  child: Text('表示したい送信元アドレスを追加してください'),
                                 ),
                               );
                             }
-                            if (futureSnapshot.hasError) {
-                              return SliverFillRemaining(
-                                child: Center(
-                                  child: Text('Error: ${futureSnapshot.error}'),
-                                ),
-                              );
-                            }
+                            final allowedSenders = snapshot.data!;
 
-                            final chatsRaw = futureSnapshot.data ?? [];
-                            if (chatsRaw.isEmpty) {
-                              return const SliverFillRemaining(
-                                child: Center(child: Text('一致するスレッドがありません')),
-                              );
-                            }
-                            final senderToLatest =
-                                <String, Map<String, dynamic>>{};
-                            for (final m in chatsRaw) {
-                              final email = ((m['fromEmail'] ?? '') as String)
-                                  .toLowerCase();
-                              if (email.isNotEmpty) senderToLatest[email] = m;
-                            }
-                            return FutureBuilder<Map<String, int>>(
-                              future: _loadUnreadCounts(allowedSenders),
-                              builder: (context, usnap) {
-                                final unreadMap =
-                                    usnap.data ?? const <String, int>{};
-                                final chatList = senderToLatest.values
-                                    .map(_mapToChat)
-                                    .toList();
-                                return SliverList(
-                                  delegate: SliverChildBuilderDelegate((
-                                    context,
-                                    index,
-                                  ) {
-                                    final chat = chatList[index];
-                                    final unread =
-                                        unreadMap[chat.senderEmail
-                                            .toLowerCase()] ??
-                                        0;
-                                    return Slidable(
-                                      key: ValueKey(chat.threadId),
-                                      endActionPane: ActionPane(
-                                        motion: const ScrollMotion(),
-                                        children: [
-                                          SlidableAction(
-                                            onPressed: (_) async {
-                                              await _markSenderAllRead(
-                                                chat.senderEmail,
-                                              );
-                                              if (!mounted) return;
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(
-                                                    '${chat.name} を既読にしました',
+                            return FutureBuilder<List<Map<String, dynamic>>>(
+                              future: _loadChatsUnified(allowedSenders, linked),
+                              builder: (context, futureSnapshot) {
+                                if (futureSnapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const SliverFillRemaining(
+                                    child: Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  );
+                                }
+                                if (futureSnapshot.hasError) {
+                                  return SliverFillRemaining(
+                                    child: Center(
+                                      child: Text(
+                                        'Error: ${futureSnapshot.error}',
+                                      ),
+                                    ),
+                                  );
+                                }
+
+                                final chatsRaw = futureSnapshot.data ?? [];
+                                if (chatsRaw.isEmpty) {
+                                  return const SliverFillRemaining(
+                                    child: Center(
+                                      child: Text('一致するスレッドがありません'),
+                                    ),
+                                  );
+                                }
+
+                                final senderToLatest =
+                                    <String, Map<String, dynamic>>{};
+                                for (final m in chatsRaw) {
+                                  final email =
+                                      ((m['fromEmail'] ?? '') as String)
+                                          .toLowerCase();
+                                  if (email.isNotEmpty) {
+                                    senderToLatest[email] = m;
+                                  }
+                                }
+
+                                return FutureBuilder<Map<String, int>>(
+                                  future: _loadUnreadCounts(allowedSenders),
+                                  builder: (context, usnap) {
+                                    final unreadMap =
+                                        usnap.data ?? const <String, int>{};
+                                    final chatList = senderToLatest.values
+                                        .map(_mapToChat)
+                                        .toList();
+                                    return SliverList(
+                                      delegate: SliverChildBuilderDelegate((
+                                        context,
+                                        index,
+                                      ) {
+                                        final chat = chatList[index];
+                                        final unread =
+                                            unreadMap[chat.senderEmail
+                                                .toLowerCase()] ??
+                                            0;
+                                        return Slidable(
+                                          key: ValueKey(chat.threadId),
+                                          endActionPane: ActionPane(
+                                            motion: const ScrollMotion(),
+                                            children: [
+                                              SlidableAction(
+                                                onPressed: (_) async {
+                                                  await _markSenderAllRead(
+                                                    chat.senderEmail,
+                                                  );
+                                                  if (!mounted) return;
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        '${chat.name} を既読にしました',
+                                                      ),
+                                                    ),
+                                                  );
+                                                  setState(() {});
+                                                },
+                                                backgroundColor: Colors.green,
+                                                foregroundColor: Colors.white,
+                                                icon: Icons
+                                                    .mark_email_read_outlined,
+                                                label: '既読',
+                                              ),
+                                            ],
+                                          ),
+                                          child: ListTile(
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            tileColor: cs.surfaceVariant,
+                                            leading: _avatarWithBadge(
+                                              chat.avatarUrl,
+                                              unread,
+                                            ),
+                                            title: Text(
+                                              chat.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            subtitle: Text(
+                                              chat.lastMessage,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            trailing: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.end,
+                                              children: [
+                                                Text(
+                                                  chat.time,
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
                                                   ),
                                                 ),
+                                                const SizedBox(height: 6),
+                                                _unreadChip(unread),
+                                              ],
+                                            ),
+                                            onTap: () {
+                                              if (chat.senderEmail.isEmpty) {
+                                                return;
+                                              }
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      PersonChatScreen(
+                                                        senderEmail:
+                                                            chat.senderEmail,
+                                                        title: chat.name,
+                                                      ),
+                                                ),
                                               );
-                                              setState(() {});
                                             },
-                                            backgroundColor: Colors.green,
-                                            foregroundColor: Colors.white,
-                                            icon: Icons.mark_email_read,
-                                            label: '既読',
                                           ),
-                                        ],
-                                      ),
-                                      child: ListTile(
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        tileColor: cs.surfaceVariant,
-                                        leading: _avatarWithBadge(
-                                          chat.avatarUrl,
-                                          unread,
-                                        ),
-                                        title: Text(
-                                          chat.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        subtitle: Text(
-                                          chat.lastMessage,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        trailing: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.end,
-                                          children: [
-                                            Text(
-                                              chat.time,
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 6),
-                                            _unreadChip(unread),
-                                          ],
-                                        ),
-                                        onTap: () {
-                                          if (chat.senderEmail.isEmpty) return;
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => PersonChatScreen(
-                                                senderEmail: chat.senderEmail,
-                                                title: chat.name,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
+                                        );
+                                      }, childCount: chatList.length),
                                     );
-                                  }, childCount: chatList.length),
+                                  },
                                 );
                               },
                             );
@@ -578,6 +639,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                         );
                       },
                     ),
+
                     SliverToBoxAdapter(child: SizedBox(height: bottomPad + 72)),
                   ],
                 );
@@ -590,7 +652,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   }
 }
 
-// --- サブウィジェット群（元のファイルから移植） ---
+// ----------------- サブウィジェット -----------------
 class _AllButton extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
@@ -647,6 +709,7 @@ class _AccountAvatar extends StatelessWidget {
     required this.onTap,
     this.dark = false,
   });
+
   @override
   Widget build(BuildContext context) {
     final borderColor = dark
@@ -693,10 +756,7 @@ class _AddAccountButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final border = dark ? Colors.white54 : Colors.black26;
-    final fg = dark ? Colors.white : Colors.black87;
     final bg = dark ? Colors.black : Colors.white;
-
     return Padding(
       padding: const EdgeInsets.only(left: 4),
       child: InkWell(
@@ -705,13 +765,8 @@ class _AddAccountButton extends StatelessWidget {
         child: Container(
           width: 48,
           height: 48,
-          decoration: ShapeDecoration(
-            color: bg,
-            shape: const CircleBorder(
-              side: BorderSide(color: Colors.transparent),
-            ),
-          ),
-          child: Icon(Icons.add_circle, size: 48, color: Colors.white),
+          decoration: ShapeDecoration(color: bg, shape: const CircleBorder()),
+          child: const Icon(Icons.add_circle, size: 48, color: Colors.white),
         ),
       ),
     );
@@ -720,15 +775,17 @@ class _AddAccountButton extends StatelessWidget {
 
 class _AccountsBar extends StatelessWidget {
   final Stream<List<_LinkedAccount>> streamLinkedAccounts;
-  final String? activeAccountEmail;
+  final String? activeAccountEmail; // null = All
   final Future<void> Function(String?) switchToAccount;
   final Future<void> Function() linkGoogleAccount;
+  final _LinkedAccount? currentUser; // 現在の Firebase ユーザー
 
   const _AccountsBar({
     required this.streamLinkedAccounts,
     required this.activeAccountEmail,
     required this.switchToAccount,
     required this.linkGoogleAccount,
+    required this.currentUser,
   });
 
   @override
@@ -753,25 +810,40 @@ class _AccountsBar extends StatelessWidget {
             StreamBuilder<List<_LinkedAccount>>(
               stream: streamLinkedAccounts,
               builder: (context, snapshot) {
-                final accounts = snapshot.data ?? [];
+                // 先頭に現在ログイン中を重複回避で挿入
+                final fetched = snapshot.data ?? const <_LinkedAccount>[];
+                final accounts = <_LinkedAccount>[
+                  if (currentUser != null &&
+                      !fetched.any(
+                        (a) =>
+                            a.email.toLowerCase() ==
+                            currentUser!.email.toLowerCase(),
+                      ))
+                    currentUser!,
+                  ...fetched,
+                ];
+
                 return SizedBox(
-                  width: MediaQuery.of(context).size.width, // ★★★ この行を追加 ★★★
+                  width: MediaQuery.of(context).size.width,
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     physics: const BouncingScrollPhysics(),
                     child: Row(
                       children: [
-                        // _AllChip を _AllButton に置き換え
+                        // All
                         _AllButton(
                           selected: activeAccountEmail == null,
                           onTap: () => switchToAccount(null),
                           dark: true,
                         ),
                         const SizedBox(width: 12),
+
+                        // アカウント群
                         ...accounts.map((a) {
                           final isSelected =
-                              (a.email.toLowerCase() ==
-                              (activeAccountEmail ?? '').toLowerCase());
+                              activeAccountEmail != null &&
+                              a.email.toLowerCase() ==
+                                  activeAccountEmail!.toLowerCase();
                           return Padding(
                             padding: const EdgeInsets.only(right: 12),
                             child: _AccountAvatar(
@@ -781,7 +853,9 @@ class _AccountsBar extends StatelessWidget {
                               dark: true,
                             ),
                           );
-                        }).toList(),
+                        }),
+
+                        // 追加ボタン
                         _AddAccountButton(onTap: linkGoogleAccount, dark: true),
                       ],
                     ),
