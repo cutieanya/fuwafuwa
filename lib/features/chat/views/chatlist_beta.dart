@@ -1,4 +1,15 @@
 // chat_beta_screen.dart
+//
+// 目的：指定送信元の Gmail スレッドを“人ごと一覧”で表示する画面。
+// - 上段：アカウント切替バー（PullDownReveal の背面）
+// - 下段：メール一覧（スレッドの最新メッセージ基準、送信元ごとに 1 行）
+// - 右側のトレーリングには 日時 + 未読件数バッジ（アイコン横のバッジは出さない）
+// - 編集モードではチェックボックスを表示、下部に一括操作バーをスライド表示。
+// - 既読操作後は未読キャッシュを無効化して再取得（UI を即更新）
+//
+// 補足：UI の「BOTTOM OVERFLOWED ～」回避のため、トレーリングは固定幅にし、
+//       mainAxisSize を min に、ListTile に minVerticalPadding を与えています。
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,13 +21,15 @@ import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
 import 'pull_down_reveal.dart';
 
 // ----------------- モデル -----------------
+
+/// 一覧 1 行分の最終メッセージ情報（送信元ごとに最新のみ）
 class Chat {
-  final String threadId;
-  final String name;
-  final String lastMessage;
-  final String time;
-  final String avatarUrl;
-  final String senderEmail;
+  final String threadId; // スレッドID（画面遷移や重複排除に使用）
+  final String name; // 表示名（From の表示名）
+  final String lastMessage; // スニペット（本文冒頭）
+  final String time; // 表示用の時刻文字列（例 2025/9/19 19:11）
+  final String avatarUrl; // アバター画像URL（今はプレースホルダ固定）
+  final String senderEmail; // 左右判定/既読対象に使う From のメールアドレス
   Chat({
     required this.threadId,
     required this.name,
@@ -27,6 +40,7 @@ class Chat {
   });
 }
 
+/// 連携済み Google アカウント（Firestore に保存）
 class _LinkedAccount {
   final String email;
   final String displayName;
@@ -39,6 +53,7 @@ class _LinkedAccount {
 }
 
 // -------------- 画面本体 -----------------
+
 class ChatBetaScreen extends StatefulWidget {
   const ChatBetaScreen({super.key});
   @override
@@ -46,7 +61,10 @@ class ChatBetaScreen extends StatefulWidget {
 }
 
 class _ChatBetaScreenState extends State<ChatBetaScreen> {
+  // Gmail REST を直接叩くサービス（google_sign_in のトークンを渡す）
   final _service = GmailService();
+
+  // 画面側でも Google Sign-In を持っておき、アカウント切替などに使用
   final GoogleSignIn _gsi = GoogleSignIn(
     scopes: const [
       'email',
@@ -56,27 +74,43 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     ],
   );
 
-  // 行末の表示領域を固定してリレイアウトを抑える
-  static const double _kTrailingWidth = 92.0;
+  // ------ レイアウト調整系 ------
 
-  String? _activeAccountEmail; // null = All
-  bool _isEditMode = false;
-  final Set<String> _selectedThreadIds = {};
+  /// トレーリング領域の固定幅
+  /// - AnimatedSwitcher で情報とチェックボックス切替時のレイアウト揺れ防止
+  /// - 未読チップのオーバーフローも出にくくなる
+  static const double _kTrailingWidth = 96.0;
+
+  // ------ 画面状態 ------
+
+  String? _activeAccountEmail; // null = All（将来的にアカウント横断用）
+  bool _isEditMode = false; // 編集モード（チェック表示 & 下部アクションバー）
+  final Set<String> _selectedThreadIds = {}; // 編集モードの選択セット
+
+  /// 一時的な「一覧からの非表示スナップショット」
+  /// - 指定スレッドの最新時刻を記録し、以後その時刻より古いメッセージは隠す
   final Map<String, DateTime?> _hiddenSnapshotByThread = {};
+
+  /// スレッドID → 最後に描画した Chat データ（既読一括時の送信元取得などで使用）
   final Map<String, Chat> _lastChatById = {};
+
+  /// スレッドID → 最新メッセージの DateTime（_hiddenSnapshot 判定用）
   final Map<String, DateTime?> _lastTimeByThread = {};
 
-  // ===== Futureキャッシュ（無駄なリロード抑制） =====
+  // ------ 取得キャッシュ（不要な再ロード抑制） ------
+
   Future<List<Map<String, dynamic>>>? _chatsFuture;
-  String _chatsFutureKey = '';
+  String _chatsFutureKey = ''; // キーが変わったら Future を作り直す
   Future<Map<String, int>>? _unreadFuture;
   String _unreadFutureKey = '';
 
+  /// Set を安定化させるためのキー文字列化（差分検知用）
   String _sendersKey(Set<String> s) {
     final l = s.toList()..sort();
     return l.join(',');
   }
 
+  /// 条件が変わったときだけ Future を差し替える
   void _ensureFutures(Set<String> senders, List<_LinkedAccount> linked) {
     final chatsKey = '${_activeAccountEmail ?? "all"}|${_sendersKey(senders)}';
     if (_chatsFutureKey != chatsKey) {
@@ -90,30 +124,33 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
   }
 
+  /// 未読バッジだけ速く更新したいときに呼ぶ（既読操作後など）
   void _invalidateUnreadCache() {
     _unreadFutureKey = '';
   }
 
   // ---------- 起動時：サイレントサインイン ----------
+
   @override
   void initState() {
     super.initState();
     _bootstrapSignIn();
   }
 
+  /// 可能なら無操作でサインイン → サービス側の認証ヘッダも同期
   Future<void> _bootstrapSignIn() async {
     try {
       final acc = await _gsi.signInSilently();
       if (!mounted) return;
       _activeAccountEmail = acc?.email.toLowerCase();
-      await _refreshServiceAuth(); // ★ 認証同期
+      await _refreshServiceAuth(); // 認証同期（GmailService に Bearer を渡す）
       setState(() {});
     } catch (_) {
-      // 無視（Allで動かす）
+      // サイレント失敗は無視（All として動作させる）
     }
   }
 
-  // ★ GmailService の認証を現在の GoogleSignIn ユーザーで更新
+  /// GmailService に現在のアクセストークンを渡す
   Future<void> _refreshServiceAuth() async {
     try {
       final headers = await _gsi.currentUser?.authHeaders;
@@ -125,7 +162,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
   }
 
-  // ---------- Firestore パス ----------
+  // ---------- Firestore パス（ユーザー毎の設定保存先） ----------
+
   DocumentReference<Map<String, dynamic>> get _filtersDoc {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) throw StateError('未ログインです。ログイン後に再度お試しください。');
@@ -146,7 +184,9 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         .doc('accounts');
   }
 
-  // ---------- Filters ----------
+  // ---------- Filters（表示対象送信元の管理） ----------
+
+  /// 表示許可の送信元アドレス集合を購読
   Stream<Set<String>> _streamAllowedSenders() {
     return _filtersDoc.snapshots().map((snap) {
       final list =
@@ -156,6 +196,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
+  /// 送信元アドレスを 1 件追加
   Future<void> _addAllowedSender(String emailRaw) async {
     final email = _extractEmail(emailRaw.trim());
     if (email == null || email.isEmpty) {
@@ -171,6 +212,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }, SetOptions(merge: true));
   }
 
+  /// 送信元アドレスを 1 件削除
   Future<void> _removeAllowedSender(String email) async {
     await _filtersDoc.set({
       'allowedSenders': FieldValue.arrayRemove([email.toLowerCase()]),
@@ -178,7 +220,9 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }, SetOptions(merge: true));
   }
 
-  // ---------- Linked Accounts ----------
+  // ---------- Linked Accounts（複数アカウント連携） ----------
+
+  /// 連携済みアカウントのリストを購読
   Stream<List<_LinkedAccount>> _streamLinkedAccounts() {
     return _accountsDoc.snapshots().map((snap) {
       final raw = (snap.data()?['linked'] as List?) ?? const [];
@@ -196,6 +240,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
+  /// Google アカウントを 1 件追加（サインイン成功で Firestore に保存）
   Future<void> _linkGoogleAccount() async {
     try {
       final account = await _gsi.signIn();
@@ -210,7 +255,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
           },
         ]),
       }, SetOptions(merge: true));
-      await _refreshServiceAuth();
+      await _refreshServiceAuth(); // Bearer 反映
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -224,23 +269,26 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
   }
 
-  /// アカウント切替（signOutしない / 認証更新する）
+  /// アカウント切替（signOut しない。必要なら signIn を促す）
   Future<void> _switchToAccount(String? email) async {
+    // まずローカル状態とキャッシュキーを更新
     setState(() {
       _activeAccountEmail = email; // null = All
       _isEditMode = false;
       _selectedThreadIds.clear();
-      _chatsFutureKey = ''; // 条件変わるのでキャッシュ無効化
+      _chatsFutureKey = ''; // 条件が変わるので invalidate
       _unreadFutureKey = '';
     });
 
-    if (email == null) return;
+    if (email == null) return; // All の場合はここで終わり
 
+    // 現在のアカウントが違う場合はサインイン（ユーザーにアカウント選択 UI が出る）
     final cur = await _gsi.signInSilently();
     if (!(cur != null && cur.email.toLowerCase() == email.toLowerCase())) {
       final acc = await _gsi.signIn();
       if (acc == null) return;
       if (!mounted) return;
+      // 要求と違うメールでサインインされた場合のフォールバック
       if (acc.email.toLowerCase() != email.toLowerCase()) {
         ScaffoldMessenger.of(
           context,
@@ -249,38 +297,44 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       }
     }
 
-    await _refreshServiceAuth(); // ここが肝
+    // サービス側のヘッダを更新
+    await _refreshServiceAuth();
   }
 
-  // ---------- Gmail 取得 ----------
+  // ---------- Gmail 取得（サービス層呼び出し） ----------
+
+  /// 指定送信元 set にマッチするスレッドの「最新メッセージ」を取得 → 送信元で 1 行化
   Future<List<Map<String, dynamic>>> _loadChatsFor(Set<String> senders) async {
     if (senders.isEmpty) return const <Map<String, dynamic>>[];
     final list = await _service.fetchThreadsBySenders(
       senders: senders.toList(),
-      newerThan: '30d',
+      newerThan: '30d', // 直近 30 日に限定（クエリを軽量化）
       maxResults: 20,
       limit: 200,
     );
     return _dedupBySender(list);
   }
 
+  /// 将来は複数アカウント横断をここで統合。今は単一アカウントと同じ。
   Future<List<Map<String, dynamic>>> _loadChatsUnified(
     Set<String> senders,
     List<_LinkedAccount> _linked,
   ) async {
-    return _loadChatsFor(senders); // 将来：複数アカウント横断
+    return _loadChatsFor(senders);
   }
 
+  /// 複数送信元の未読件数まとめて取得（UI の右側バッジ用）
   Future<Map<String, int>> _loadUnreadCounts(Set<String> senders) {
     if (senders.isEmpty) return Future.value(<String, int>{});
     return _service.countUnreadBySenders(
       senders.toList(),
       newerThan: '365d',
       pageSize: 50,
-      capPerSender: 500,
+      capPerSender: 500, // 99+ のように丸める上限
     );
   }
 
+  /// 同一送信元の最新だけを残す（人ごと一覧にしたいので）
   List<Map<String, dynamic>> _dedupBySender(List<Map<String, dynamic>> raw) {
     final bySender = <String, Map<String, dynamic>>{};
     for (final m in raw) {
@@ -298,15 +352,17 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
           ? current['timeDt'] as DateTime
           : null;
 
+      // より新しいものを残す
       final shouldReplace =
           (current == null) ||
           (newTime != null && (curTime == null || newTime.isAfter(curTime)));
 
       if (shouldReplace) {
-        m['fromEmail'] = key;
+        m['fromEmail'] = key; // 正規化したメールを入れておく
         bySender[key] = m;
       }
     }
+    // 新しい順に並べ替え
     final list = bySender.values.toList();
     list.sort((a, b) {
       final da = a['timeDt'] as DateTime?;
@@ -319,7 +375,9 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     return list;
   }
 
-  // ---------- UIユーティリティ ----------
+  // ---------- UI ユーティリティ ----------
+
+  /// "表示名 <addr@x>" / "addr@x" からメールだけ抜き出す
   String? _extractEmail(String raw) {
     final m = RegExp(
       r'([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,})',
@@ -327,13 +385,14 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     return m?.group(1)?.toLowerCase();
   }
 
-  // 送信元の未読を一括既読（スナックバーは出さない）
+  /// 指定送信元の未読を一括で既読（Gmail batchModify）→ 件数を返す
   Future<int> _markSenderAllRead(String senderEmail) async {
     final q = 'from:${senderEmail.toLowerCase()} is:unread';
     final n = await _service.markReadByQuery(q);
     return n;
   }
 
+  /// サービスの Map 形式を画面用の Chat へ整形
   Chat _mapToChat(Map<String, dynamic> m) {
     final threadId = (m['threadId'] ?? m['id'] ?? '').toString();
     final name = (m['counterpart'] ?? m['from'] ?? '(unknown)').toString();
@@ -353,35 +412,12 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     );
   }
 
-  Widget _avatarWithBadge(String avatarUrl, int unread) {
-    return Stack(
-      children: [
-        CircleAvatar(radius: 24, backgroundImage: NetworkImage(avatarUrl)),
-        if (unread > 0)
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: Colors.red,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: Text(
-                unread > 99 ? '99+' : unread.toString(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+  /// バッジ無しのアバター（左側）
+  Widget _avatar(String avatarUrl) {
+    return CircleAvatar(radius: 24, backgroundImage: NetworkImage(avatarUrl));
   }
 
+  /// 右側の未読チップ（小さめ・行間詰めでオーバーフロー回避）
   Widget _unreadChip(int unread) {
     if (unread <= 0) return const SizedBox.shrink();
     return Container(
@@ -394,13 +430,15 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         unread > 99 ? '99+' : unread.toString(),
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 12,
+          fontSize: 11,
+          height: 1.0,
           fontWeight: FontWeight.bold,
         ),
       ),
     );
   }
 
+  /// FirebaseAuth の現在ユーザーを連携リストに混ぜるための簡易変換
   _LinkedAccount? _currentUserAsLinked() {
     final u = FirebaseAuth.instance.currentUser;
     if (u == null || (u.email ?? '').isEmpty) return null;
@@ -412,6 +450,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   }
 
   // ---------- 編集モード ----------
+
+  /// 右上ボタンで編集モード切替
   void _toggleEditMode() {
     setState(() {
       _isEditMode = !_isEditMode;
@@ -419,6 +459,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
+  /// 選択したスレッドを“一覧から一時非表示”にする（データ削除ではない）
   Future<void> _deleteSelectedFromView() async {
     for (final tid in _selectedThreadIds) {
       _hiddenSnapshotByThread[tid] = _lastTimeByThread[tid];
@@ -428,6 +469,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
+  /// 選択したスレッドの送信元ごとに未読を一括既読
   Future<void> _markSelectedRead() async {
     if (_selectedThreadIds.isEmpty) return;
     final emails = <String>{};
@@ -437,14 +479,18 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         emails.add(chat.senderEmail.toLowerCase());
       }
     }
+    // 送信元単位で既読化（API の呼び出し回数は送信元数分）
     for (final e in emails) {
       await _markSenderAllRead(e);
     }
-    _invalidateUnreadCache(); // 未読数を即更新
+    // 未読バッジをすぐ更新させる
+    _invalidateUnreadCache();
     setState(() {
       _selectedThreadIds.clear();
     });
   }
+
+  // ---------- ビルド ----------
 
   @override
   Widget build(BuildContext context) {
@@ -455,12 +501,14 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     return Scaffold(
       body: Stack(
         children: [
+          // ===== 1. PullDownReveal（背面バー + 前面スクロール） =====
           Column(
             children: [
               Expanded(
                 child: PullDownReveal(
-                  minChildSize: 0.8,
-                  handle: false,
+                  minChildSize: 0.8, // つまみを引っ張ると 0.8 まで縮む
+                  handle: false, // ハンドル非表示（デザイン都合）
+                  // 背面：アカウント切替バー
                   backBar: _AccountsBar(
                     streamLinkedAccounts: _streamLinkedAccounts(),
                     activeAccountEmail: _activeAccountEmail,
@@ -468,12 +516,13 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                     linkGoogleAccount: _linkGoogleAccount,
                     currentUser: currentAsLinked,
                   ),
+                  // 前面：メール一覧
                   frontBuilder: (scroll) {
                     return CustomScrollView(
                       controller: scroll,
                       physics: const BouncingScrollPhysics(),
                       slivers: [
-                        // ヘッダー
+                        // --- ヘッダー（タイトル + 編集ボタン） ---
                         SliverToBoxAdapter(
                           child: SafeArea(
                             bottom: false,
@@ -489,6 +538,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                     ),
                                   ),
                                   const Spacer(),
+                                  // 編集/完了 トグル
                                   InkWell(
                                     onTap: _toggleEditMode,
                                     customBorder: const CircleBorder(),
@@ -528,14 +578,14 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                           ),
                         ),
 
-                        // 検索ボタン
+                        // --- 検索ボタン（ダミー） ---
                         SliverToBoxAdapter(
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
                             child: SizedBox(
                               height: 44,
                               child: OutlinedButton.icon(
-                                onPressed: () {},
+                                onPressed: () {}, // TODO: 検索画面へ
                                 icon: const Icon(Icons.search),
                                 label: const Text('Search'),
                                 style: OutlinedButton.styleFrom(
@@ -553,7 +603,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                           ),
                         ),
 
-                        // リスト
+                        // --- リスト本体 ---
                         StreamBuilder<List<_LinkedAccount>>(
                           stream: _streamLinkedAccounts(),
                           builder: (context, accSnap) {
@@ -562,6 +612,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                             return StreamBuilder<Set<String>>(
                               stream: _streamAllowedSenders(),
                               builder: (context, snapshot) {
+                                // フィルタ未設定時の空状態
                                 if (!snapshot.hasData ||
                                     snapshot.data!.isEmpty) {
                                   return const SliverFillRemaining(
@@ -571,13 +622,17 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                   );
                                 }
                                 final allowedSenders = snapshot.data!;
-                                _ensureFutures(allowedSenders, linked);
+                                _ensureFutures(
+                                  allowedSenders,
+                                  linked,
+                                ); // Future をセット/再利用
 
                                 return FutureBuilder<
                                   List<Map<String, dynamic>>
                                 >(
                                   future: _chatsFuture,
                                   builder: (context, futureSnapshot) {
+                                    // ローディング
                                     if (futureSnapshot.connectionState ==
                                             ConnectionState.waiting ||
                                         futureSnapshot.connectionState ==
@@ -588,6 +643,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                         ),
                                       );
                                     }
+                                    // 取得失敗
                                     if (futureSnapshot.hasError) {
                                       return SliverFillRemaining(
                                         child: Center(
@@ -607,9 +663,11 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                       );
                                     }
 
+                                    // 一時非表示ロジックのための準備
                                     _lastChatById.clear();
                                     _lastTimeByThread.clear();
 
+                                    // 非表示対象を除外
                                     final visibleRaw = <Map<String, dynamic>>[];
                                     for (final m in chatsRaw) {
                                       final threadId =
@@ -635,6 +693,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                       );
                                     }
 
+                                    // 画面用モデルへ変換
                                     final chatList = visibleRaw
                                         .map((e) => _mapToChat(e))
                                         .toList();
@@ -654,8 +713,11 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                       _lastChatById[tid] = chatList[i];
                                     }
 
+                                    // 未読件数の Future
                                     return FutureBuilder<Map<String, int>>(
-                                      future: _unreadFuture,
+                                      future:
+                                          _unreadFuture ??
+                                          Future.value(const <String, int>{}),
                                       builder: (context, usnap) {
                                         final unreadMap =
                                             usnap.data ?? const <String, int>{};
@@ -673,16 +735,19 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                             final selected = _selectedThreadIds
                                                 .contains(chat.threadId);
 
+                                            // 1 行分
                                             final tile = ListTile(
+                                              // ▼▼▼ ここがオーバーフロー対策の肝 ▼▼▼
+                                              minVerticalPadding:
+                                                  10, // タイル上下に余裕を持たせる
+                                              // contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), // 古い Flutter ならこっち
+                                              // ▲▲▲
                                               shape: RoundedRectangleBorder(
                                                 borderRadius:
                                                     BorderRadius.circular(12),
                                               ),
                                               tileColor: cs.surfaceVariant,
-                                              leading: _avatarWithBadge(
-                                                chat.avatarUrl,
-                                                unread,
-                                              ),
+                                              leading: _avatar(chat.avatarUrl),
                                               title: Text(
                                                 chat.name,
                                                 maxLines: 1,
@@ -693,7 +758,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
-                                              // ★ 固定幅 + AnimatedSwitcher で切替
+
+                                              // 右端（固定幅）: 編集モード ↔ 情報 表示切替
                                               trailing: SizedBox(
                                                 width: _kTrailingWidth,
                                                 child: AnimatedSwitcher(
@@ -704,6 +770,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                       Curves.easeOutCubic,
                                                   switchOutCurve:
                                                       Curves.easeInCubic,
+                                                  // 切替時に高さがズレないよう Stack で重ねる
                                                   layoutBuilder:
                                                       (
                                                         currentChild,
@@ -721,6 +788,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                         );
                                                       },
                                                   child: _isEditMode
+                                                      // 編集中：チェックボックス
                                                       ? Align(
                                                           key: ValueKey(
                                                             'cb_${chat.threadId}',
@@ -764,10 +832,13 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                             ),
                                                           ),
                                                         )
+                                                      // 通常：時刻 + 未読チップ
                                                       : Column(
                                                           key: ValueKey(
                                                             'info_${chat.threadId}',
                                                           ),
+                                                          mainAxisSize: MainAxisSize
+                                                              .min, // ← 高さを必要最小限に
                                                           mainAxisAlignment:
                                                               MainAxisAlignment
                                                                   .center,
@@ -781,16 +852,18 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                                   const TextStyle(
                                                                     fontSize:
                                                                         12,
+                                                                    height: 1.0,
                                                                   ),
                                                             ),
                                                             const SizedBox(
-                                                              height: 6,
+                                                              height: 4,
                                                             ),
                                                             _unreadChip(unread),
                                                           ],
                                                         ),
                                                 ),
                                               ),
+                                              // タップ：編集中は選択トグル、通常はトーク画面へ
                                               onTap: _isEditMode
                                                   ? () {
                                                       setState(() {
@@ -827,8 +900,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                     },
                                             );
 
+                                            // 編集モード中はスワイプ無効
                                             if (_isEditMode) {
-                                              // 編集モード中は Slidable 無効
                                               return Padding(
                                                 padding:
                                                     const EdgeInsets.symmetric(
@@ -839,6 +912,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                               );
                                             }
 
+                                            // 通常時はスワイプで「既読」
                                             return Padding(
                                               padding:
                                                   const EdgeInsets.symmetric(
@@ -855,7 +929,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                         await _markSenderAllRead(
                                                           chat.senderEmail,
                                                         );
-                                                        _invalidateUnreadCache();
+                                                        _invalidateUnreadCache(); // バッジ即更新
                                                         setState(() {});
                                                       },
                                                       backgroundColor:
@@ -882,6 +956,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                           },
                         ),
 
+                        // 下部タブ分の余白（デバイスのセーフエリアも考慮）
                         SliverToBoxAdapter(
                           child: SizedBox(height: bottomPad + 72),
                         ),
@@ -893,7 +968,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
             ],
           ),
 
-          // ===== 画面下の編集アクションバー（常に置いてアニメで出し入れ） =====
+          // ===== 2. 画面下の編集アクションバー（常に配置してアニメで入れ替え） =====
           Positioned(
             left: 0,
             right: 0,
@@ -901,9 +976,11 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
             child: SafeArea(
               top: false,
               child: IgnorePointer(
-                ignoring: !_isEditMode,
+                ignoring: !_isEditMode, // 非表示時はタップを無効化
                 child: AnimatedSlide(
-                  offset: _isEditMode ? Offset.zero : const Offset(0, 1),
+                  offset: _isEditMode
+                      ? Offset.zero
+                      : const Offset(0, 1), // 下にスライドアウト
                   duration: const Duration(milliseconds: 220),
                   curve: Curves.easeOutCubic,
                   child: AnimatedOpacity(
@@ -927,7 +1004,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                       ),
                       child: Row(
                         children: [
-                          // 削除（一覧から一時的に隠す）
+                          // 削除（= 一覧から一時的に隠す）
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
@@ -960,7 +1037,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          // 既読（通知なし / 黒角丸ボタン）
+                          // 既読（= 送信元ごとに一括既読）
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
@@ -996,7 +1073,8 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   }
 }
 
-// ----------------- サブウィジェット -----------------
+// ----------------- サブウィジェット（アカウント切替バー） -----------------
+
 class _AllButton extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
@@ -1153,6 +1231,7 @@ class _AccountsBar extends StatelessWidget {
               stream: streamLinkedAccounts,
               builder: (context, snapshot) {
                 final fetched = snapshot.data ?? const <_LinkedAccount>[];
+                // 現在ログイン中のアカウントが Firestore の linked にない場合は先頭に表示
                 final accounts = <_LinkedAccount>[
                   if (currentUser != null &&
                       !fetched.any(

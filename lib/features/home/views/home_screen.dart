@@ -139,29 +139,52 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectedForDelete.clear();
   }
 
-  /// ----------------- Link Google Account -----------------
+  /// ----------------- Link Google Account (重複なくUpsert) -----------------
   Future<void> _linkGoogleAccount() async {
     try {
+      // ★重要：一度サインアウトしてアカウント選択UIを毎回出す
+      await _gsi.signOut();
+      // await _gsi.disconnect(); // iOSで効くことがある（必要なら）
+
       final account = await _gsi.signIn();
       if (account == null) return; // キャンセル
+
+      // 既存を読み込み → 同じemailがあれば上書き、なければ追加
+      final doc = await _accountsDoc.get();
+      final raw = (doc.data()?['linked'] as List?) ?? const <dynamic>[];
+      final List<Map<String, dynamic>> linked = raw
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .toList();
+
+      final email = account.email.toLowerCase();
+      final idx = linked.indexWhere(
+        (m) => (m['email'] ?? '').toString().toLowerCase() == email,
+      );
+
+      final entry = {
+        'email': email,
+        'displayName': account.displayName,
+        'photoUrl': account.photoUrl,
+      };
+
+      if (idx >= 0) {
+        linked[idx] = {...linked[idx], ...entry};
+      } else {
+        linked.add(entry);
+      }
+
       await _accountsDoc.set({
-        'linked': FieldValue.arrayUnion([
-          {
-            'email': account.email.toLowerCase(),
-            'displayName': account.displayName,
-            'photoUrl': account.photoUrl,
-            'linkedAt': FieldValue.serverTimestamp(),
-          },
-        ]),
+        'linked': linked,
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('アカウントを追加しました：${account.email}')));
-      // 初回は選択状態にしてもOK
+
       setState(() {
-        _activeAccountEmail ??= account.email.toLowerCase();
+        _activeAccountEmail ??= email;
       });
     } catch (e) {
       if (!mounted) return;
@@ -183,7 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// ----------------- Simple bottom sheet base -----------------
-  /// タイトル・本文・左右ボタンを黒白で統一した下からのシート
   Future<T?> _showSimpleSheet<T>({required Widget content}) {
     return showModalBottomSheet<T>(
       context: context,
@@ -342,7 +364,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const Text(
               'Linked Accounts',
               style: TextStyle(
-                fontSize: 24, // サイズ指定
+                fontSize: 24,
                 color: Colors.white,
                 fontWeight: FontWeight.w700,
               ),
@@ -401,21 +423,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// ----------------- UI: メール一覧カード（白角丸：上左右＋右下） -----------------
+  /// ----------------- UI: メール一覧カード -----------------
   Widget _mailListCard() {
     return Expanded(
       child: Padding(
-        // 横いっぱいにしたいので左右の余白は 0
         padding: const EdgeInsets.fromLTRB(0, 8, 0, 0),
         child: Container(
-          width: double.infinity, // 念のため横幅いっぱい指定
+          width: double.infinity,
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(20),
               topRight: Radius.circular(20),
               bottomRight: Radius.circular(20),
-              bottomLeft: Radius.circular(0), // 左下のみ直角
+              bottomLeft: Radius.circular(0),
             ),
             boxShadow: [
               BoxShadow(
@@ -425,7 +446,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          clipBehavior: Clip.antiAlias, // 角丸に沿って内部もクリップ
+          clipBehavior: Clip.antiAlias,
           child: StreamBuilder<List<String>>(
             stream: _streamAllowedSenders(),
             builder: (context, snap) {
@@ -502,19 +523,17 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white, // ドックは白
+          color: Colors.white,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 追加
             IconButton(
               tooltip: 'メールを追加',
               onPressed: _openAddSheet,
               icon: const Icon(Icons.add, color: Colors.black),
             ),
-            // 削除モード トグル
             IconButton(
               tooltip: _isDeleteMode ? '削除モード解除' : '削除モード',
               onPressed: () => setState(() {
@@ -526,7 +545,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: _isDeleteMode ? Colors.red : Colors.black,
               ),
             ),
-            // 完了
             FilledButton(
               style: _filledBlack,
               onPressed: () async {
@@ -542,7 +560,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ).showSnackBar(const SnackBar(content: Text('削除しました')));
                   }
                 }
-                // ドックを閉じて、削除モードも解除
                 setState(() {
                   _isEditingDockOpen = false;
                   _isDeleteMode = false;
