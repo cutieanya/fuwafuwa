@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'chatlist_beta.dart';
-import 'package:fuwafuwa/features/auth/view/lobby_page.dart';
 import 'package:fuwafuwa/features/home/views/home_screen.dart';
 
 class RootShell extends StatefulWidget {
@@ -17,8 +16,8 @@ class _RootShellState extends State<RootShell> {
 
   final _pages = const [
     HomeScreen(),
-    ChatBetaScreen(), // ← チャット画面
-    LobbyPage(),
+    ChatBetaScreen(), // ← あなたのPullDownReveal画面
+    _ProfileScreen(),
   ];
 
   @override
@@ -55,6 +54,7 @@ class _RootShellState extends State<RootShell> {
     );
   }
 }
+
 
 class _ProfileScreen extends StatelessWidget {
   const _ProfileScreen({super.key});
