@@ -55,9 +55,8 @@ class _RootShellState extends State<RootShell> {
   }
 }
 
-
 class _ProfileScreen extends StatelessWidget {
-  const _ProfileScreen({super.key});
+  const _ProfileScreen();
   @override
   Widget build(BuildContext context) => const Scaffold(
     body: Center(

@@ -528,7 +528,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        tileColor: cs.surfaceVariant,
+                        tileColor: cs.surfaceContainerHighest,
                         leading: _avatarWithBadge(chat.avatarUrl, unread),
                         title: Text(
                           chat.name,

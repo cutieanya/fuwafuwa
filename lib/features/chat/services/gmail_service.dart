@@ -24,8 +24,9 @@ class GmailService {
   );
 
   // ---- Chat から受け取る認証情報（優先して使う）----
-  Map<String, String>? _authHeadersOverride; // GoogleSignInAccount.authHeaders をそのまま保持
-  String? _activeEmailOverride;              // 任意：現在アカウントのメール
+  Map<String, String>?
+  _authHeadersOverride; // GoogleSignInAccount.authHeaders をそのまま保持
+  String? _activeEmailOverride; // 任意：現在アカウントのメール
 
   /// Chat 側の GoogleSignIn.currentUser?.authHeaders を渡す
   Future<void> refreshAuthHeaders(
@@ -56,7 +57,9 @@ class GmailService {
     }
     final t = await _tokenFromGSI();
     if (t == null) {
-      throw Exception('No auth header / token. Call refreshAuthHeaders() or sign in.');
+      throw Exception(
+        'No auth header / token. Call refreshAuthHeaders() or sign in.',
+      );
     }
     return {
       'Authorization': 'Bearer $t',
@@ -75,7 +78,9 @@ class GmailService {
   // ---------------------------------------------------------------------------
 
   String _normalizeEmail(String raw) {
-    final m = RegExp(r'([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,})').firstMatch(raw);
+    final m = RegExp(
+      r'([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,})',
+    ).firstMatch(raw);
     return (m?.group(1) ?? raw).trim().toLowerCase();
   }
 
@@ -98,7 +103,9 @@ class GmailService {
   // ---------------------------------------------------------------------------
 
   Future<Map<String, dynamic>> _getMessageSummary(String messageId) async {
-    final uri = Uri.parse('$_base/messages/$messageId?format=metadata&metadataHeaders=From&metadataHeaders=Date');
+    final uri = Uri.parse(
+      '$_base/messages/$messageId?format=metadata&metadataHeaders=From&metadataHeaders=Date',
+    );
     final res = await http.get(uri, headers: await _headers());
     if (res.statusCode != 200) {
       throw Exception('getMessage failed: ${res.statusCode} ${res.body}');
@@ -111,7 +118,8 @@ class GmailService {
         : null;
 
     String? fromHeader;
-    final headers = (data['payload']?['headers'] as List? ?? []).cast<Map<String, dynamic>>();
+    final headers = (data['payload']?['headers'] as List? ?? [])
+        .cast<Map<String, dynamic>>();
     for (final h in headers) {
       final name = (h['name'] ?? '').toString().toLowerCase();
       final value = (h['value'] ?? '').toString();
@@ -120,14 +128,14 @@ class GmailService {
 
     String fromName = '(unknown)';
     String fromEmail = '';
-    if (fromHeader != null && fromHeader!.isNotEmpty) {
-      final m = RegExp(r'^(.*)<\s*([^>]+)\s*>$').firstMatch(fromHeader!);
+    if (fromHeader != null && fromHeader.isNotEmpty) {
+      final m = RegExp(r'^(.*)<\s*([^>]+)\s*>$').firstMatch(fromHeader);
       if (m != null) {
         fromName = (m.group(1) ?? '').trim().replaceAll('"', '');
         fromEmail = (m.group(2) ?? '').trim().toLowerCase();
         if (fromName.isEmpty) fromName = fromEmail;
       } else {
-        fromEmail = fromHeader!.trim().toLowerCase();
+        fromEmail = fromHeader.trim().toLowerCase();
         fromName = fromEmail;
       }
     }
@@ -164,8 +172,8 @@ class GmailService {
     while (out.length < limit) {
       final params = <String, String>{
         'maxResults': '$maxResults',
-        if (pageToken != null) 'pageToken': pageToken!,
-        if (query != null && query.trim().isNotEmpty) 'q': query!,
+        if (pageToken != null) 'pageToken': pageToken,
+        if (query != null && query.trim().isNotEmpty) 'q': query,
       };
 
       final uri = Uri.parse('$_base/threads').replace(queryParameters: params);
@@ -262,26 +270,32 @@ class GmailService {
     }
 
     final data = json.decode(res.body) as Map<String, dynamic>;
-    final rawMessages = (data['messages'] as List? ?? []).cast<Map<String, dynamic>>();
+    final rawMessages = (data['messages'] as List? ?? [])
+        .cast<Map<String, dynamic>>();
 
     String subject = '';
     if (rawMessages.isNotEmpty) {
-      final firstHeaders = (rawMessages.first['payload']?['headers'] as List? ?? [])
-          .cast<Map<String, dynamic>>();
+      final firstHeaders =
+          (rawMessages.first['payload']?['headers'] as List? ?? [])
+              .cast<Map<String, dynamic>>();
       subject = _headerValue(firstHeaders, 'Subject') ?? '';
     }
 
     final messages = <Map<String, dynamic>>[];
     for (final m in rawMessages) {
       final payload = m['payload'] as Map<String, dynamic>? ?? const {};
-      final headers = (payload['headers'] as List? ?? []).cast<Map<String, dynamic>>();
+      final headers = (payload['headers'] as List? ?? [])
+          .cast<Map<String, dynamic>>();
       final snippet = (m['snippet'] ?? '').toString();
       final from = _headerValue(headers, 'From') ?? '';
       final subj = _headerValue(headers, 'Subject') ?? subject;
 
       final internalMs = int.tryParse('${m['internalDate'] ?? ''}');
       final dt = internalMs != null
-          ? DateTime.fromMillisecondsSinceEpoch(internalMs, isUtc: true).toLocal()
+          ? DateTime.fromMillisecondsSinceEpoch(
+              internalMs,
+              isUtc: true,
+            ).toLocal()
           : null;
 
       messages.add({
@@ -294,8 +308,9 @@ class GmailService {
 
     String lastMessageIdHeader = '';
     if (rawMessages.isNotEmpty) {
-      final lastHeaders = (rawMessages.last['payload']?['headers'] as List? ?? [])
-          .cast<Map<String, dynamic>>();
+      final lastHeaders =
+          (rawMessages.last['payload']?['headers'] as List? ?? [])
+              .cast<Map<String, dynamic>>();
       lastMessageIdHeader =
           _headerValue(lastHeaders, 'Message-ID') ??
           _headerValue(lastHeaders, 'Message-Id') ??
@@ -345,7 +360,7 @@ class GmailService {
       final params = <String, String>{
         'q': q,
         'maxResults': '$pageSize',
-        if (pageToken != null) 'pageToken': pageToken!,
+        if (pageToken != null) 'pageToken': pageToken,
       };
 
       final uri = Uri.parse('$_base/threads').replace(queryParameters: params);
@@ -415,13 +430,17 @@ class GmailService {
       final params = <String, String>{
         'q': q,
         'maxResults': '$maxResults',
-        if (pageToken != null) 'pageToken': pageToken!,
+        if (pageToken != null) 'pageToken': pageToken,
       };
-      final listUri = Uri.parse('$_base/messages').replace(queryParameters: params);
+      final listUri = Uri.parse(
+        '$_base/messages',
+      ).replace(queryParameters: params);
 
       final listRes = await http.get(listUri, headers: await _headers());
       if (listRes.statusCode != 200) {
-        throw Exception('messages.list failed: ${listRes.statusCode} ${listRes.body}');
+        throw Exception(
+          'messages.list failed: ${listRes.statusCode} ${listRes.body}',
+        );
       }
 
       final listData = json.decode(listRes.body) as Map<String, dynamic>;
@@ -458,8 +477,14 @@ class GmailService {
 
   Future<void> markMessageRead(String messageId) async {
     final uri = Uri.parse('$_base/messages/$messageId/modify');
-    final body = {'removeLabelIds': ['UNREAD']};
-    final res = await http.post(uri, headers: await _headers(jsonContent: true), body: json.encode(body));
+    final body = {
+      'removeLabelIds': ['UNREAD'],
+    };
+    final res = await http.post(
+      uri,
+      headers: await _headers(jsonContent: true),
+      body: json.encode(body),
+    );
     if (res.statusCode != 200) {
       throw Exception('markMessageRead failed: ${res.statusCode} ${res.body}');
     }
@@ -467,8 +492,14 @@ class GmailService {
 
   Future<void> markThreadRead(String threadId) async {
     final uri = Uri.parse('$_base/threads/$threadId/modify');
-    final body = {'removeLabelIds': ['UNREAD']};
-    final res = await http.post(uri, headers: await _headers(jsonContent: true), body: json.encode(body));
+    final body = {
+      'removeLabelIds': ['UNREAD'],
+    };
+    final res = await http.post(
+      uri,
+      headers: await _headers(jsonContent: true),
+      body: json.encode(body),
+    );
     if (res.statusCode != 200) {
       throw Exception('markThreadRead failed: ${res.statusCode} ${res.body}');
     }
@@ -482,9 +513,11 @@ class GmailService {
       final params = <String, String>{
         'q': q,
         'maxResults': '$pageSize',
-        if (pageToken != null) 'pageToken': pageToken!,
+        if (pageToken != null) 'pageToken': pageToken,
       };
-      final listUri = Uri.parse('$_base/messages').replace(queryParameters: params);
+      final listUri = Uri.parse(
+        '$_base/messages',
+      ).replace(queryParameters: params);
       final listRes = await http.get(listUri, headers: await _headers());
       if (listRes.statusCode != 200) break;
 
@@ -499,10 +532,19 @@ class GmailService {
     if (ids.isEmpty) return 0;
 
     final batchUri = Uri.parse('$_base/messages/batchModify');
-    final body = {'ids': ids, 'removeLabelIds': ['UNREAD']};
-    final batchRes = await http.post(batchUri, headers: await _headers(jsonContent: true), body: json.encode(body));
+    final body = {
+      'ids': ids,
+      'removeLabelIds': ['UNREAD'],
+    };
+    final batchRes = await http.post(
+      batchUri,
+      headers: await _headers(jsonContent: true),
+      body: json.encode(body),
+    );
     if (batchRes.statusCode != 200) {
-      throw Exception('batchModify failed: ${batchRes.statusCode} ${batchRes.body}');
+      throw Exception(
+        'batchModify failed: ${batchRes.statusCode} ${batchRes.body}',
+      );
     }
     return ids.length;
   }

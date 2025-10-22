@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-// import 'package:fuwafuwa/features/auth/view/lobby_page.dart';
 import 'package:fuwafuwa/features/auth/view/first_screen.dart';
-// firebase firebaseCoreプラグインと以前に生成した構成ファイルをインポート
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:fuwafuwa/features/chat/views/bottom_bar.dart';
+//import 'package:fuwafuwa/ui/home_page.dart';
+
+// ★ 追加：DriftのローカルDBを初期化
+import 'data/local_db/local_db.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  runApp(const MyApp());
+
+  // DBを初期化
+  final _ = LocalDb.instance;
+
+  runApp(const MyApp()); // ← これが動く
 }
 
 class MyApp extends StatelessWidget {
@@ -25,22 +31,20 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      // ログイン状態に応じて初期画面を決定
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            // ログイン状態を確認中
             return const Scaffold(
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          
+
           if (snapshot.hasData) {
-            // ログイン済み → RootShellを表示
+            // ログイン済み
             return const RootShell();
           } else {
-            // 未ログイン → ログイン画面を表示
+            // 未ログイン
             return const LoginScreen();
           }
         },
