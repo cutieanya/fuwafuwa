@@ -1,49 +1,82 @@
 // gmail_service.dart
 //
 // 目的：Gmail API を http で直接叩く薄いサービス層。
-// - Google Sign-In で取得したアクセストークンを使って REST を呼びます。
+// - Google Sign-In で取得したアクセストークン or authHeaders を使って REST を呼びます。
 // - スレッド一覧（サマリ）と、送信元ごとのメッセージ一覧（LINE風トーク画面用）を提供。
 // - サーバー側フィルタ（q=from:... OR from:... newer_than:30d 等）に対応。
-//
-// 注意：本ファイルは UI を持ちません。画面側（ChatListScreen / PersonChatScreen）から
-//       このサービスの関数を呼んでデータを受け取り、UI に反映します。
+// - Chat 側から refreshAuthHeaders(...) を呼べば、アカウント切替後も確実にそのアカウントで実行されます。
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
 
 class GmailService {
-  // Google サインインのインスタンス。
-  // - scopes に Gmail の権限を付与（閲覧のみなら gmail.readonly でOK）
+  // REST のベース URL（me = 認証済みユーザー自身）
+  static const _base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+
+  // （フォールバック用）このインスタンスでサインインも可能だが、
+  // 基本は refreshAuthHeaders() で渡されたヘッダを使う。
   final GoogleSignIn _gsi = GoogleSignIn(
     scopes: <String>[
       'email',
       'profile',
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/gmail.modify',
-      // もし既読変更や送信も扱うなら modify スコープを追加してください：
-      // 'https://www.googleapis.com/auth/gmail.modify',
     ],
   );
 
-  // REST のベース URL（me = 認証済みユーザー自身）
-  static const _base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+  // ---- Chat から受け取る認証情報（優先して使う）----
+  Map<String, String>?
+  _authHeadersOverride; // GoogleSignInAccount.authHeaders をそのまま保持
+  String? _activeEmailOverride; // 任意：現在アカウントのメールを保持（左右判定用など）
+
+  /// Chat 側の GoogleSignIn.currentUser?.authHeaders を渡す
+  /// 例: await _service.refreshAuthHeaders(await _gsi.currentUser?.authHeaders, email: _gsi.currentUser?.email);
+  Future<void> refreshAuthHeaders(
+    Map<String, String>? headers, {
+    String? email,
+  }) async {
+    _authHeadersOverride = (headers == null) ? null : Map.of(headers);
+    _activeEmailOverride = email?.toLowerCase();
+  }
 
   // ---------------------------------------------------------------------------
-  // 認証ヘルパ：アクセストークンを取得
+  // 認証ヘルパ
   // ---------------------------------------------------------------------------
-  Future<String?> _token() async {
-    // 既にサインイン済みであればサイレントに。そうでなければUIでサインイン。
+
+  // フォールバック：自前の GoogleSignIn からアクセストークンを得る
+  Future<String?> _tokenFromGSI() async {
     final account = await _gsi.signInSilently() ?? await _gsi.signIn();
     if (account == null) return null;
     final auth = await account.authentication;
-    return auth.accessToken; // Bearer トークンを返却
+    return auth.accessToken;
   }
 
-  // 自分の Gmail アドレス（UI で「自分⇔相手」の左右判定に使う）
+  // 最終的に使う HTTP ヘッダを作成（override を最優先）
+  Future<Map<String, String>> _headers({bool jsonContent = false}) async {
+    if (_authHeadersOverride != null &&
+        _authHeadersOverride!['Authorization'] != null) {
+      final h = Map<String, String>.from(_authHeadersOverride!);
+      if (jsonContent) h['Content-Type'] = 'application/json';
+      return h;
+    }
+    final t = await _tokenFromGSI();
+    if (t == null) {
+      throw Exception(
+        'No auth header / token. Call refreshAuthHeaders() or sign in.',
+      );
+    }
+    return {
+      'Authorization': 'Bearer $t',
+      if (jsonContent) 'Content-Type': 'application/json',
+    };
+  }
+
+  // 自分の Gmail アドレス（UI の左右判定に使用したい場合）
   Future<String?> myAddress() async {
+    if (_activeEmailOverride != null) return _activeEmailOverride;
     final account = await _gsi.signInSilently() ?? await _gsi.signIn();
-    return account?.email?.toLowerCase();
+    return account?.email.toLowerCase();
   }
 
   // ---------------------------------------------------------------------------
@@ -60,7 +93,7 @@ class GmailService {
 
   /// 送信元の配列から Gmail 検索クエリを生成
   /// 例) ['a@x','b@x'] -> 'from:a@x OR from:b@x'
-  /// newerThan は '7d' / '30d' / '3m' / '1y' などを想定（Gmail の高度な検索構文）
+  /// newerThan は '7d' / '30d' / '3m' / '1y' など（Gmail の高度な検索構文）
   String _buildFromQuery(List<String> senders, {String? newerThan}) {
     final parts = senders
         .where((e) => e.trim().isNotEmpty)
@@ -77,13 +110,9 @@ class GmailService {
 
   // ---------------------------------------------------------------------------
   // メッセージ1件をサマリへ（From / Date / snippet など）
-  // - バブル表示のために fromEmail / timeDt も返却（左右判定や時刻整列に便利）
+  // - バブル表示のために fromEmail / timeDt も返却
   // ---------------------------------------------------------------------------
   Future<Map<String, dynamic>> _getMessageSummary(String messageId) async {
-    final t = await _token();
-    if (t == null) return {};
-
-    // メタデータ形式：本文本体は取得せず、必要なヘッダだけもらう
     final uri = Uri.parse(
       '$_base/messages/$messageId'
       '?format=metadata'
@@ -91,19 +120,19 @@ class GmailService {
       '&metadataHeaders=Date',
     );
 
-    final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
+    final res = await http.get(uri, headers: await _headers());
     if (res.statusCode != 200) {
       throw Exception('getMessage failed: ${res.statusCode} ${res.body}');
     }
     final data = json.decode(res.body) as Map<String, dynamic>;
 
-    // internalDate はエポックms（UTC）→ 端末ローカルへ
+    // internalDate はエポックms（UTC）
     final internalMs = int.tryParse('${data['internalDate'] ?? ''}');
     final date = internalMs != null
         ? DateTime.fromMillisecondsSinceEpoch(internalMs, isUtc: true).toLocal()
         : null;
 
-    // ヘッダから From を抽出
+    // From
     String? fromHeader;
     final headers = (data['payload']?['headers'] as List? ?? [])
         .cast<Map<String, dynamic>>();
@@ -113,7 +142,6 @@ class GmailService {
       if (name == 'from') fromHeader = value;
     }
 
-    // From を表示名とメールに分割
     String fromName = '(unknown)';
     String fromEmail = '';
     if (fromHeader != null && fromHeader!.isNotEmpty) {
@@ -123,13 +151,11 @@ class GmailService {
         fromEmail = (m.group(2) ?? '').trim().toLowerCase();
         if (fromName.isEmpty) fromName = fromEmail;
       } else {
-        // "addr@ex.com" のみ
         fromEmail = fromHeader!.trim().toLowerCase();
         fromName = fromEmail;
       }
     }
 
-    // 一覧に出す簡易時刻文字列（細かいローカライズはUI側で）
     String timeStr = '';
     if (date != null) {
       timeStr =
@@ -139,27 +165,22 @@ class GmailService {
     return {
       'id': data['id'],
       'threadId': data['threadId'],
-      'from': fromName, // 表示名
-      'fromEmail': fromEmail, // メールアドレス（左右判定に有用）
+      'from': fromName,
+      'fromEmail': fromEmail,
       'snippet': data['snippet'] ?? '',
-      'time': timeStr, // 一覧用の文字列
-      'timeDt': date, // DateTime（並び替え/同分判定などに）
+      'time': timeStr,
+      'timeDt': date,
     };
   }
 
   // ---------------------------------------------------------------------------
   // スレッド一覧 + 各スレッドの最新メッセージのサマリ
-  // - query を渡すと Gmail 側で検索（q=...）
-  // - ページングも吸収（nextPageToken）
   // ---------------------------------------------------------------------------
   Future<List<Map<String, dynamic>>> fetchThreads({
     String? query, // 例：'from:a@x OR from:b@x newer_than:30d'
-    int maxResults = 20, // list 1回の取得上限（Gmailの page size）
-    int limit = 100, // 全体の最大件数（画面要件に合わせて調整）
+    int maxResults = 20,
+    int limit = 100,
   }) async {
-    final t = await _token();
-    if (t == null) return [];
-
     String? pageToken;
     final out = <Map<String, dynamic>>[];
 
@@ -171,7 +192,7 @@ class GmailService {
       };
 
       final uri = Uri.parse('$_base/threads').replace(queryParameters: params);
-      final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
+      final res = await http.get(uri, headers: await _headers());
       if (res.statusCode != 200) {
         throw Exception('threads failed: ${res.statusCode} ${res.body}');
       }
@@ -179,16 +200,13 @@ class GmailService {
       final data = json.decode(res.body) as Map<String, dynamic>;
       final threads = (data['threads'] as List? ?? []);
 
-      // 各スレッドの「最新メッセージ1通」を取り、そのサマリを out に追加
+      // 各スレッドの最新メッセージ1通を取得
       for (final th in threads) {
         if (out.length >= limit) break;
 
         final threadId = th['id'] as String;
         final tUri = Uri.parse('$_base/threads/$threadId?format=metadata');
-        final tRes = await http.get(
-          tUri,
-          headers: {'Authorization': 'Bearer $t'},
-        );
+        final tRes = await http.get(tUri, headers: await _headers());
         if (tRes.statusCode != 200) continue;
 
         final tData = json.decode(tRes.body) as Map<String, dynamic>;
@@ -201,7 +219,7 @@ class GmailService {
       }
 
       pageToken = data['nextPageToken'] as String?;
-      if (pageToken == null) break; // もう次のページが無い
+      if (pageToken == null) break;
     }
 
     return out;
@@ -209,15 +227,13 @@ class GmailService {
 
   // ---------------------------------------------------------------------------
   // 送信元で絞ってスレッド一覧を取得（ChatList 用）
-  // - 送信元が大量の場合、クエリ長対策でチャンクに分割して複数回呼ぶ
-  // - 重複スレッドは threadId で除去
   // ---------------------------------------------------------------------------
   Future<List<Map<String, dynamic>>> fetchThreadsBySenders({
-    required List<String> senders, // 表示したい送信元
-    String? newerThan, // 例: '30d'（任意）
+    required List<String> senders,
+    String? newerThan,
     int maxResults = 20,
     int limit = 100,
-    int chunkSize = 15, // 送信元が多い時に何件ずつ OR で束ねるか
+    int chunkSize = 15,
   }) async {
     // 正規化＆重複排除
     final normalized = {for (final s in senders) _normalizeEmail(s)}
@@ -234,7 +250,6 @@ class GmailService {
       final q = _buildFromQuery(chunk, newerThan: newerThan);
       if (q.isEmpty) continue;
 
-      // 残り必要数に合わせて取得
       final remaining = limit - all.length;
       if (remaining <= 0) break;
 
@@ -244,7 +259,6 @@ class GmailService {
         limit: remaining,
       );
 
-      // スレッド重複を除外
       for (final m in part) {
         final tid = (m['threadId'] ?? m['id'] ?? '').toString();
         if (tid.isEmpty || seenThreadIds.contains(tid)) continue;
@@ -258,19 +272,18 @@ class GmailService {
     return all;
   }
 
+  // ---------------------------------------------------------------------------
+  // 未読カウント
+  // ---------------------------------------------------------------------------
   Future<int> countUnreadBySender(
     String senderEmail, {
     String? newerThan, // 例: '30d'
-    int pageSize = 50, // 1ページの最大件数
-    int capPerSender = 500, // これ以上は「99+」的に丸める想定
+    int pageSize = 50,
+    int capPerSender = 500,
   }) async {
-    final t = await _token();
-    if (t == null) return 0;
-
     final email = senderEmail.trim().toLowerCase();
     if (email.isEmpty) return 0;
 
-    // クエリ例： (from:foo@bar) is:unread newer_than:30d
     String q = 'from:$email is:unread';
     if (newerThan != null && newerThan.trim().isNotEmpty) {
       q = '($q) newer_than:${newerThan.trim()}';
@@ -286,18 +299,16 @@ class GmailService {
         if (pageToken != null) 'pageToken': pageToken!,
       };
 
-      // スレッド単位で数える（1スレッドに未読があれば1カウント）
+      // スレッド単位でカウント
       final uri = Uri.parse('$_base/threads').replace(queryParameters: params);
-      final res = await http.get(uri, headers: {'Authorization': 'Bearer $t'});
+      final res = await http.get(uri, headers: await _headers());
       if (res.statusCode != 200) {
-        // 失敗時は 0 とする（UI 側で未読バッジ無しになる）
-        break;
+        break; // 失敗時は 0 扱い
       }
       final data = json.decode(res.body) as Map<String, dynamic>;
       final threads = (data['threads'] as List? ?? []);
       count += threads.length;
 
-      // 上限キャップ
       if (count >= capPerSender) {
         count = capPerSender;
         break;
@@ -310,7 +321,7 @@ class GmailService {
     return count;
   }
 
-  /// 複数送信元の未読件数をまとめて取得（順次実行・適度に速い）
+  /// 複数送信元の未読件数をまとめて取得
   Future<Map<String, int>> countUnreadBySenders(
     List<String> senders, {
     String? newerThan,
@@ -333,23 +344,17 @@ class GmailService {
   }
 
   // ---------------------------------------------------------------------------
-  // 送信元の“メッセージ一覧”を取得（PersonChat 用：LINE風トーク画面）
-  // - Gmail の messages.list に q=from:sender を渡す
-  // - 各メッセージを _getMessageSummary で軽量取得して時系列昇順で返す
+  // 送信元のメッセージ一覧（PersonChat 用）
   // ---------------------------------------------------------------------------
   Future<List<Map<String, dynamic>>> fetchMessagesBySender(
     String senderEmail, {
     String? newerThan, // 例: '6m'
-    int maxResults = 50, // list 1回の取得上限
-    int limit = 300, // 取得総数の上限（無限に取らない安全装置）
+    int maxResults = 50,
+    int limit = 300,
   }) async {
-    final t = await _token();
-    if (t == null) return [];
-
     final email = senderEmail.trim().toLowerCase();
     if (email.isEmpty) return [];
 
-    // q を作成（例：'(from:a@x) newer_than:6m'）
     String q = 'from:$email';
     if (newerThan != null && newerThan.trim().isNotEmpty) {
       q = '($q) newer_than:${newerThan.trim()}';
@@ -368,10 +373,7 @@ class GmailService {
         '$_base/messages',
       ).replace(queryParameters: params);
 
-      final listRes = await http.get(
-        listUri,
-        headers: {'Authorization': 'Bearer $t'},
-      );
+      final listRes = await http.get(listUri, headers: await _headers());
       if (listRes.statusCode != 200) {
         throw Exception(
           'messages.list failed: ${listRes.statusCode} ${listRes.body}',
@@ -391,10 +393,10 @@ class GmailService {
       }
 
       pageToken = listData['nextPageToken'] as String?;
-      if (pageToken == null) break; // 次ページが無ければ終了
+      if (pageToken == null) break;
     }
 
-    // バブル表示では「古い→新しい」の昇順が自然
+    // 「古い→新しい」の昇順
     out.sort((a, b) {
       final da = a['timeDt'] as DateTime?;
       final db = b['timeDt'] as DateTime?;
@@ -406,22 +408,20 @@ class GmailService {
 
     return out;
   }
-  // gmail_service.dart（GmailService クラスの中に追記）
+
+  // ---------------------------------------------------------------------------
+  // 既読化
+  // ---------------------------------------------------------------------------
 
   /// 1通を既読にする（UNREADラベルを外す）
   Future<void> markMessageRead(String messageId) async {
-    final t = await _token();
-    if (t == null) return;
     final uri = Uri.parse('$_base/messages/$messageId/modify');
     final body = {
       'removeLabelIds': ['UNREAD'],
     };
     final res = await http.post(
       uri,
-      headers: {
-        'Authorization': 'Bearer $t',
-        'Content-Type': 'application/json',
-      },
+      headers: await _headers(jsonContent: true),
       body: json.encode(body),
     );
     if (res.statusCode != 200) {
@@ -431,18 +431,13 @@ class GmailService {
 
   /// スレッド全体を既読にする（スレッド内の各メッセージから UNREAD を外す）
   Future<void> markThreadRead(String threadId) async {
-    final t = await _token();
-    if (t == null) return;
     final uri = Uri.parse('$_base/threads/$threadId/modify');
     final body = {
       'removeLabelIds': ['UNREAD'],
     };
     final res = await http.post(
       uri,
-      headers: {
-        'Authorization': 'Bearer $t',
-        'Content-Type': 'application/json',
-      },
+      headers: await _headers(jsonContent: true),
       body: json.encode(body),
     );
     if (res.statusCode != 200) {
@@ -454,9 +449,6 @@ class GmailService {
   /// - 例: q='from:foo@example.com is:unread newer_than:90d'
   /// - メッセージIDを検索 → batchModify
   Future<int> markReadByQuery(String q, {int pageSize = 100}) async {
-    final t = await _token();
-    if (t == null) return 0;
-
     // まず ids 収集
     final ids = <String>[];
     String? pageToken;
@@ -470,10 +462,7 @@ class GmailService {
       final listUri = Uri.parse(
         '$_base/messages',
       ).replace(queryParameters: params);
-      final listRes = await http.get(
-        listUri,
-        headers: {'Authorization': 'Bearer $t'},
-      );
+      final listRes = await http.get(listUri, headers: await _headers());
       if (listRes.statusCode != 200) break;
 
       final data = json.decode(listRes.body) as Map<String, dynamic>;
@@ -494,10 +483,7 @@ class GmailService {
     };
     final batchRes = await http.post(
       batchUri,
-      headers: {
-        'Authorization': 'Bearer $t',
-        'Content-Type': 'application/json',
-      },
+      headers: await _headers(jsonContent: true),
       body: json.encode(body),
     );
     if (batchRes.statusCode != 200) {
