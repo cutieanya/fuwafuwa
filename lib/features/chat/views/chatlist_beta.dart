@@ -3,28 +3,28 @@
 // 目的：指定送信元（人）ごとに、ローカルDBに同期済みのGmailデータを一覧表示。
 // - 上段：アカウント切替バー（PullDownReveal の背面）※将来複数アカウント対応用に残しつつ、今はDB駆動
 // - 下段：人ごと最新メッセージ1行＋未読バッジ（DB集計）
-// - 既読スワイプ：Gmail API 既読 → DBのisUnreadもfalse更新 → UI即反映
+// - スワイプ：一覧から非表示（UIだけ消す。DB/Gmailは変更しない）
 //
-// 必要カラム：messages.counterpart_email（相手メール）/ is_unread / direction / internal_date / subject / snippet
+// 必要カラム：messages.counterpart_email / is_unread / direction / internal_date / subject / snippet
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-// ★ Driftの拡張（count()/max()）を使うため、showを使わず通常importにする
+// Driftの集計(count/max)を使うので、FlutterのColumnと衝突しないように hide Column
 import 'package:drift/drift.dart' hide Column;
 
 import 'package:fuwafuwa/features/chat/views/person_chat_screen.dart';
 import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
 import 'pull_down_reveal.dart';
 
-// ★ ローカルDB
+// ★ ローカルDB・リポジトリ
 import 'package:fuwafuwa/data/local_db/local_db.dart';
+import 'package:fuwafuwa/data/repositories/gmail_repository.dart';
 
 // ----------------- モデル -----------------
 
-/// 一覧 1 行分の最終メッセージ情報（送信元ごとに最新のみ）
 class Chat {
   final String threadId; // ここでは senderEmail をキーとして流用
   final String name; // 表示名（メールアドレスをそのままでもOK）
@@ -42,7 +42,6 @@ class Chat {
   });
 }
 
-/// 連携済み Google アカウント（Firestore に保存）
 class _LinkedAccount {
   final String email;
   final String displayName;
@@ -63,7 +62,7 @@ class ChatBetaScreen extends StatefulWidget {
 }
 
 class _ChatBetaScreenState extends State<ChatBetaScreen> {
-  // Gmail REST（既読化など）※一覧はDBから読むので、APIは操作系のみで使用
+  // Gmail REST（操作系で使用。一覧はDBから読む）
   final _service = GmailService();
 
   // アカウント切替UI用（将来の複数アカウント対応に継続使用）
@@ -122,7 +121,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     super.initState();
     _bootstrapSignIn();
 
-    // 一時修復（起動時に一度だけ実行）
+    // 起動時の一時修復：counterpart_email を from で埋める（冪等）
     _fixCounterpartEmail();
   }
 
@@ -282,12 +281,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     final maxDt = m.internalDate.max();
 
     final q = db.selectOnly(m)
-      ..addColumns([
-        m.counterpartEmail, // 相手メール
-        maxDt, // 最新日時
-        m.subject, // 表示用（厳密には最新行と一致しない場合あり）
-        m.snippet, // 同上
-      ])
+      ..addColumns([m.counterpartEmail, maxDt, m.subject, m.snippet])
       ..where(m.counterpartEmail.isNotNull())
       ..groupBy([m.counterpartEmail])
       ..orderBy([OrderingTerm.desc(maxDt)]);
@@ -301,7 +295,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       final snippet = r.read(m.snippet) ?? '';
       return {
         'id': email,
-        'threadId': email, // Person単位の遷移キーとして流用
+        'threadId': email,
         'fromEmail': email,
         'subject': subject,
         'snippet': snippet,
@@ -312,7 +306,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }).toList();
   }
 
-  /// フィルタ送信元（Firestore）を効かせたい場合はここで絞り込み
   Future<List<Map<String, dynamic>>> _loadChatsUnified(
     Set<String> allowedSenders,
     List<_LinkedAccount> _linked,
@@ -337,7 +330,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
 
     final q = db.selectOnly(m)
       ..addColumns([m.counterpartEmail, cnt])
-      ..where(m.isUnread.equals(true) & m.direction.equals(1)) // 受信のみ
+      ..where(m.isUnread.equals(true) & m.direction.equals(1))
       ..groupBy([m.counterpartEmail]);
 
     final rows = await q.get();
@@ -349,7 +342,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       if (email != null) map[email.toLowerCase()] = n;
     }
 
-    // もし _senders が指定されていたらその範囲に絞る（任意）
     if (_senders.isNotEmpty) {
       final setLower = _senders.map((e) => e.toLowerCase()).toSet();
       map.removeWhere((k, _) => !setLower.contains(k));
@@ -413,6 +405,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
+  // ====== 非表示（隠す） ======
   Future<void> _deleteSelectedFromView() async {
     for (final tid in _selectedThreadIds) {
       _hiddenSnapshotByThread[tid] = _lastTimeByThread[tid];
@@ -422,6 +415,48 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
+  // 1件だけ一覧から非表示にする（スワイプ用）
+  void _hideOne(String threadId) {
+    _hiddenSnapshotByThread[threadId] = _lastTimeByThread[threadId];
+    setState(() {});
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('一覧から非表示にしました')));
+  }
+
+  // ====== ローカルDB削除 ======
+  Future<void> _deleteLocalBySender(String email) async {
+    final e = email.toLowerCase();
+    // messages から削除
+    await LocalDb.instance.customStatement(
+      'DELETE FROM messages WHERE LOWER(counterpart_email) = ?;',
+      [e],
+    );
+    // 参照が無くなった threads を掃除
+    await LocalDb.instance.customStatement(
+      'DELETE FROM threads WHERE id NOT IN (SELECT DISTINCT thread_id FROM messages);',
+    );
+  }
+
+  Future<void> _deleteSelectedLocally() async {
+    if (_selectedThreadIds.isEmpty) return;
+    for (final email in _selectedThreadIds) {
+      await _deleteLocalBySender(email);
+    }
+    _invalidateUnreadCache();
+    setState(() {
+      _selectedThreadIds.clear();
+      _chatsFutureKey = ''; // 再読込
+      _unreadFutureKey = '';
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('ローカルDBから削除しました')));
+  }
+
+  // ====== 一括既読（編集バーのボタンからのみ。スワイプは非表示動作） ======
   Future<void> _markSelectedRead() async {
     if (_selectedThreadIds.isEmpty) return;
 
@@ -447,7 +482,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
-  // ---------- デバッグ: counterpartEmailごとの件数を出力 ----------
+  // ---------- デバッグ/修復 ----------
   Future<void> _debugPrintMessagesCount() async {
     final db = LocalDb.instance;
     final m = db.messages;
@@ -465,15 +500,118 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
   }
 
+  // counterpart_email を from で埋める（冪等）
   Future<void> _fixCounterpartEmail() async {
     await LocalDb.instance.customStatement('''
-    UPDATE messages
-    SET counterpart_email = LOWER("from")
-    WHERE direction = 1
-      AND counterpart_email IS NULL
-      AND "from" IS NOT NULL
-  ''');
-    debugPrint('✅ counterpart_email updated');
+      UPDATE messages
+      SET counterpart_email = LOWER("from")
+      WHERE counterpart_email IS NULL
+        AND "from" IS NOT NULL;
+    ''');
+    debugPrint('✅ counterpart_email updated (no direction filter)');
+  }
+
+  // ダミー a@x 行を安全に削除（パラメータバインド）
+  Future<void> _wipeDummyMessages({String needle = 'a@x'}) async {
+    final n = needle.toLowerCase();
+    await LocalDb.instance.customStatement(
+      'DELETE FROM messages '
+      'WHERE LOWER("from") LIKE ? OR LOWER(counterpart_email) = ?;',
+      ['%$n%', n],
+    );
+    await LocalDb.instance.customStatement(
+      'DELETE FROM threads WHERE id NOT IN (SELECT DISTINCT thread_id FROM messages);',
+    );
+    debugPrint('✅ wiped dummy messages for $n');
+  }
+
+  // Firestoreの allowedSenders をクエリに埋めてバックフィル
+  Future<void> _syncAllowedSendersInbox() async {
+    try {
+      final allowed = await _streamAllowedSenders().first;
+      debugPrint('allowedSenders: $allowed');
+
+      if (allowed.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('allowedSenders が空です')));
+        return;
+      }
+
+      // Gmail検索クエリを構築：in:inbox newer_than:30d (from:a OR from:b)
+      final parts = allowed.map((e) => 'from:${e.toLowerCase()}').join(' OR ');
+      final query = 'in:inbox newer_than:30d ($parts)';
+      debugPrint('fetchThreads query = $query');
+
+      final repo = GmailRepositoryHttp(db: LocalDb.instance, svc: _service);
+      await repo.backfillInbox(query: query, limit: 200);
+
+      // DBの状態を軽く出しておく
+      await _diagAll();
+      await _debugPrintMessagesCount();
+
+      if (!mounted) return;
+      // ★ ここで出していた「同期が完了しました」の SnackBar を削除
+      setState(() {
+        _chatsFutureKey = '';
+        _unreadFutureKey = '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('同期に失敗: $e')));
+    }
+  }
+
+  Future<void> _diagAll() async {
+    // 方向カウント
+    final rowsDir = await LocalDb.instance
+        .customSelect(
+          'SELECT direction, COUNT(*) AS c FROM messages GROUP BY direction;',
+        )
+        .get();
+    debugPrint('==== direction counts ====');
+    for (final r in rowsDir) {
+      debugPrint('direction=${r.data['direction']} : ${r.data['c']}');
+    }
+
+    // NULL フィールド
+    final rowsNull = await LocalDb.instance.customSelect('''
+      SELECT
+        SUM(CASE WHEN "from" IS NULL THEN 1 ELSE 0 END) AS null_from,
+        SUM(CASE WHEN counterpart_email IS NULL THEN 1 ELSE 0 END) AS null_counter
+      FROM messages;
+    ''').get();
+    final rn = rowsNull.first.data;
+    debugPrint('==== null field counts ====');
+    debugPrint(
+      'from IS NULL: ${rn['null_from']}, counterpart_email IS NULL: ${rn['null_counter']}',
+    );
+
+    // 先頭20件
+    final rowsPeek = await LocalDb.instance.customSelect('''
+      SELECT id, direction, "from", counterpart_email, internal_date
+      FROM messages
+      ORDER BY internal_date DESC
+      LIMIT 20;
+    ''').get();
+    debugPrint('==== peek messages ====');
+    for (final r in rowsPeek) {
+      debugPrint(r.data.toString());
+    }
+
+    // DB 内に存在する counterpart_email の一覧
+    final rowsList = await LocalDb.instance.customSelect('''
+      SELECT LOWER(counterpart_email) AS ce
+      FROM messages
+      WHERE counterpart_email IS NOT NULL
+      GROUP BY ce
+      ORDER BY ce;
+    ''').get();
+    final emails = rowsList.map((e) => e.data['ce']).toList();
+    debugPrint('DB counterpart emails: $emails');
   }
 
   // ---------- ビルド ----------
@@ -520,13 +658,36 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                     ),
                                   ),
                                   const Spacer(),
-                                  // ★ デバッグボタン：押すと件数をログ出力
+                                  // ★ デバッグボタン群
                                   IconButton(
-                                    icon: const Icon(Icons.bug_report),
+                                    icon: const Icon(Icons.cleaning_services),
                                     color: Colors.black,
-                                    onPressed: _debugPrintMessagesCount,
-                                    tooltip: 'Print DB counts',
+                                    tooltip: 'ダミー a@x を削除',
+                                    onPressed: () async {
+                                      await _wipeDummyMessages(needle: 'a@x');
+                                      await _diagAll();
+                                      await _debugPrintMessagesCount();
+                                      setState(() {});
+                                    },
                                   ),
+                                  IconButton(
+                                    icon: const Icon(Icons.sync),
+                                    color: Colors.black,
+                                    tooltip: 'allowedSenders を同期',
+                                    onPressed: () async {
+                                      await _syncAllowedSendersInbox();
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.rule),
+                                    color: Colors.black,
+                                    tooltip: 'DB 状態ダンプ',
+                                    onPressed: () async {
+                                      await _diagAll();
+                                      await _debugPrintMessagesCount();
+                                    },
+                                  ),
+                                  // 既存の編集トグル
                                   InkWell(
                                     onTap: _toggleEditMode,
                                     customBorder: const CircleBorder(),
@@ -573,7 +734,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                             child: SizedBox(
                               height: 44,
                               child: OutlinedButton.icon(
-                                onPressed: () {}, // TODO: 検索画面へ
+                                onPressed: () {}, // TODO
                                 icon: const Icon(Icons.search),
                                 label: const Text('Search'),
                                 style: OutlinedButton.styleFrom(
@@ -743,18 +904,16 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                       (
                                                         currentChild,
                                                         previousChildren,
-                                                      ) {
-                                                        return Stack(
-                                                          alignment: Alignment
-                                                              .centerRight,
-                                                          children: <Widget>[
-                                                            ...previousChildren,
-                                                            if (currentChild !=
-                                                                null)
-                                                              currentChild,
-                                                          ],
-                                                        );
-                                                      },
+                                                      ) => Stack(
+                                                        alignment: Alignment
+                                                            .centerRight,
+                                                        children: <Widget>[
+                                                          ...previousChildren,
+                                                          if (currentChild !=
+                                                              null)
+                                                            currentChild,
+                                                        ],
+                                                      ),
                                                   child: _isEditMode
                                                       ? Align(
                                                           key: ValueKey(
@@ -876,7 +1035,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                               );
                                             }
 
-                                            // 通常時はスワイプで既読
+                                            // 通常時はスワイプで「一覧から非表示」
                                             return Padding(
                                               padding:
                                                   const EdgeInsets.symmetric(
@@ -890,53 +1049,15 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                   children: [
                                                     SlidableAction(
                                                       onPressed: (_) async {
-                                                        // 1) API既読
-                                                        final q =
-                                                            'from:${chat.senderEmail.toLowerCase()} is:unread';
-                                                        await _service
-                                                            .markReadByQuery(q);
-                                                        // 2) DBも既読
-                                                        final db =
-                                                            LocalDb.instance;
-                                                        await (db.update(
-                                                                db.messages,
-                                                              )
-                                                              ..where(
-                                                                (m) => m
-                                                                    .counterpartEmail
-                                                                    .equals(
-                                                                      chat.senderEmail,
-                                                                    ),
-                                                              )
-                                                              ..where(
-                                                                (m) => m
-                                                                    .direction
-                                                                    .equals(1),
-                                                              )
-                                                              ..where(
-                                                                (m) => m
-                                                                    .isUnread
-                                                                    .equals(
-                                                                      true,
-                                                                    ),
-                                                              ))
-                                                            .write(
-                                                              const MessagesCompanion(
-                                                                isUnread: Value(
-                                                                  false,
-                                                                ),
-                                                              ),
-                                                            );
-                                                        _invalidateUnreadCache();
-                                                        setState(() {});
+                                                        _hideOne(chat.threadId);
                                                       },
                                                       backgroundColor:
                                                           Colors.black,
                                                       foregroundColor:
                                                           Colors.white,
                                                       icon: Icons
-                                                          .mark_email_read_outlined,
-                                                      label: '既読',
+                                                          .visibility_off_outlined,
+                                                      label: '非表示',
                                                     ),
                                                   ],
                                                 ),
@@ -1000,7 +1121,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                       ),
                       child: Row(
                         children: [
-                          // 一覧から非表示
+                          // 削除アクション（選択式メニュー表示）
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
@@ -1018,22 +1139,43 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                               onPressed: _selectedThreadIds.isEmpty
                                   ? null
                                   : () async {
-                                      await _deleteSelectedFromView();
+                                      // 選択肢ボトムシート
                                       if (!mounted) return;
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('一覧から非表示にしました'),
-                                        ),
-                                      );
+                                      final action =
+                                          await showModalBottomSheet<
+                                            _DeleteAction
+                                          >(
+                                            context: context,
+                                            showDragHandle: true,
+                                            builder: (ctx) => _DeleteMenu(
+                                              count: _selectedThreadIds.length,
+                                            ),
+                                          );
+                                      if (action == null) return;
+
+                                      switch (action) {
+                                        case _DeleteAction.hide:
+                                          await _deleteSelectedFromView();
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('一覧から非表示にしました'),
+                                            ),
+                                          );
+                                          break;
+                                        case _DeleteAction.local:
+                                          await _deleteSelectedLocally();
+                                          break;
+                                      }
                                     },
                               icon: const Icon(Icons.delete_outline),
                               label: Text('削除 (${_selectedThreadIds.length})'),
                             ),
                           ),
                           const SizedBox(width: 12),
-                          // 一括既読
+                          // 一括既読（DB/Gmailを更新）
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
@@ -1087,6 +1229,44 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     final hh = d.hour.toString().padLeft(2, '0');
     final mm = d.minute.toString().padLeft(2, '0');
     return '$y/$m/$day $hh:$mm';
+  }
+}
+
+// ----------------- サブ部品：削除メニュー -----------------
+
+enum _DeleteAction { hide, local }
+
+class _DeleteMenu extends StatelessWidget {
+  final int count;
+  const _DeleteMenu({super.key, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.visibility_off_outlined),
+              title: Text('一覧から非表示（$count 件）'),
+              subtitle: const Text('現在の最新時刻までを隠します。新着は再表示されます。'),
+              onTap: () => Navigator.pop(context, _DeleteAction.hide),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.delete_sweep_outlined),
+              title: Text('ローカルDBから削除（$count 件）'),
+              subtitle: const Text('端末内の保存データを消します。Gmail本体は消しません。'),
+              onTap: () => Navigator.pop(context, _DeleteAction.local),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ),
+      ),
+    );
   }
 }
 
