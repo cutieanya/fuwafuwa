@@ -5,8 +5,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-import 'package:fuwafuwa/features/chat/views/person_chat_screen.dart';
 import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
+import 'package:fuwafuwa/features/chat/services/gmail_send_service.dart';
+import 'package:fuwafuwa/features/chat/views/compose_email_screen.dart';
 import '../../auth/view/lobby_page.dart';
 
 class ChatListScreen extends StatefulWidget {
@@ -17,12 +18,14 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen> {
-  // 黒いアカウントバーの見た目/挙動
-  static const double _accountsBarHeight = 74; // 高さ
-  static const double _revealDistance = 120; // この距離ぶん引っ張ると全開
+  static const double _accountsBarHeight = 74;
+  static const double _revealDistance = 120;
 
   final _service = GmailService();
   final _addrController = TextEditingController();
+
+  // 送信ユーティリティ
+  final GmailSendService _sendSvc = GmailSendService();
 
   // GoogleSignIn（アカウント追加/切替）
   final GoogleSignIn _gsi = GoogleSignIn(
@@ -31,17 +34,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
       'profile',
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/gmail.send',
     ],
   );
 
-  // 選択中アカウント（null = ALL）
   String? _activeAccountEmail;
 
-  // 「今どのくらい引っ張ってるか」0.0〜1.0
   double _revealT = 0.0;
-  double _pullAccum = 0.0; // 累積オーバースクロール量
+  double _pullAccum = 0.0;
 
-  // ===== Firestore パス =====
   DocumentReference<Map<String, dynamic>> get _filtersDoc {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
@@ -152,8 +153,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _switchToAccount(String? email) async {
     setState(() => _activeAccountEmail = email);
-
-    if (email == null) return; // ALL（統合表示はサービス拡張が必要）
+    if (email == null) return;
 
     try {
       await _gsi.signOut();
@@ -286,22 +286,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
     setState(() {});
   }
 
-  // ===== ScrollNotification で「引っ張り量」を検知 =====
   bool _onScrollNotification(ScrollNotification n) {
-    // 先頭で下方向に引く＝オーバースクロールを積算
     if (n is OverscrollNotification) {
       if (n.metrics.pixels <= 0) {
-        // overscroll は下に引くと負の値になることが多いので絶対値に
         final add = n.overscroll.abs();
         _pullAccum += add;
       }
     } else if (n is ScrollUpdateNotification) {
-      // 上方向に戻した/通常スクロールに移行 → 累積解除
       if (n.metrics.pixels > 0 || (n.scrollDelta ?? 0) > 0) {
         _pullAccum = 0.0;
       }
     } else if (n is ScrollEndNotification) {
-      // 指を離したら徐々に閉じる（今回は即閉じ）
       if (_pullAccum < _revealDistance * 0.3) {
         _pullAccum = 0.0;
       }
@@ -311,20 +306,22 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (t != _revealT) {
       setState(() => _revealT = t);
     }
-    return false; // スクロール自体はそのまま流す
+    return false;
   }
 
-  // ---------- 画面 ----------
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final topInset = MediaQuery.of(context).padding.top;
 
     return Scaffold(
-      // 本体は Stack。下にコンテンツ、上に「黒アカウントバー」を重ねる
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showAddSenderDialog,
+        label: const Text('送信元追加'),
+        icon: const Icon(Icons.person_add_alt_1),
+      ),
       body: Stack(
         children: [
-          // 1) AppBar + コンテンツ（NestedScrollView）
           NestedScrollView(
             headerSliverBuilder: (context, inner) => [
               SliverAppBar(
@@ -333,7 +330,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 backgroundColor: Colors.white,
                 foregroundColor: Colors.black,
                 elevation: 0,
-                // ★ Material3 の「スクロール下でグレーに変わる」挙動を無効化
                 scrolledUnderElevation: 0,
                 surfaceTintColor: Colors.transparent,
                 actions: [
@@ -356,15 +352,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
           ),
 
-          // 2) 黒いアカウントバー（引っ張り量 _revealT に応じて表示）
+          // 黒いアカウントバー
           Positioned(
             left: 0,
             right: 0,
-            // AppBarの直下に出したい（ステータスバー + ツールバーの分）
             top: topInset + kToolbarHeight - _accountsBarHeight,
             height: _accountsBarHeight,
             child: IgnorePointer(
-              ignoring: _revealT < 0.85, // ほぼ出るまでタップ無効
+              ignoring: _revealT < 0.85,
               child: AnimatedOpacity(
                 opacity: _revealT,
                 duration: const Duration(milliseconds: 120),
@@ -432,7 +427,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
         final allowed = snap.data ?? const <String>{};
 
         if (allowed.isEmpty) {
-          // 中身がなくても必ず引っ張れるように AlwaysScrollable
           return ListView(
             physics: const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
@@ -552,14 +546,33 @@ class _ChatListScreenState extends State<ChatListScreen> {
                             _unreadChip(unread),
                           ],
                         ),
-                        onTap: () {
+                        onTap: () async {
                           if (chat.senderEmail.isEmpty) return;
+
+                          var account =
+                              _gsi.currentUser ?? await _gsi.signInSilently();
+                          account ??= await _gsi.signIn();
+                          if (account == null) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Googleアカウントにサインインしてください'),
+                              ),
+                            );
+                            return;
+                          }
+                          final headers = await account.authHeaders;
+                          final fromAddress = account.email;
+
+                          if (!mounted) return;
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => PersonChatScreen(
-                                senderEmail: chat.senderEmail,
-                                title: chat.name,
+                              builder: (_) => ComposeEmailScreen(
+                                initialTo: chat.senderEmail,
+                                initialFrom: fromAddress,
+                                authHeaders: headers,
+                                sendSvc: _sendSvc,
                               ),
                             ),
                           );
@@ -577,7 +590,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   // Map -> Chat 表示モデル
-  Chat _mapToChat(Map<String, dynamic> m) {
+  _Chat _mapToChat(Map<String, dynamic> m) {
     final threadId = (m['threadId'] ?? m['id'] ?? '').toString();
     final name = (m['counterpart'] ?? m['from'] ?? '(unknown)').toString();
     final lastMessage = (m['lastMessage'] ?? m['snippet'] ?? '(No message)')
@@ -588,7 +601,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     const avatar = 'https://placehold.jp/150x150.png';
 
-    return Chat(
+    return _Chat(
       threadId: threadId,
       name: name,
       lastMessage: lastMessage,
@@ -649,8 +662,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 }
 
-// --- 表示モデル ---
-class Chat {
+// --- 表示モデル（private） ---
+class _Chat {
   final String threadId;
   final String name;
   final String lastMessage;
@@ -658,7 +671,7 @@ class Chat {
   final String avatarUrl;
   final String senderEmail;
 
-  Chat({
+  _Chat({
     required this.threadId,
     required this.name,
     required this.lastMessage,
@@ -669,7 +682,6 @@ class Chat {
 }
 
 // ===== サブウィジェット =====
-
 class _LinkedAccount {
   final String email;
   final String displayName;

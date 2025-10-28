@@ -2,7 +2,7 @@
 //
 // 目的：Gmail API を http で直接叩く薄いサービス層。
 // - Google Sign-In で取得したアクセストークン or authHeaders を使って REST を呼びます。
-// - スレッド一覧（サマリ）と、送信元ごとのメッセージ一覧（LINE風トーク画面用）を提供。
+// - スレッド一覧（サマリ）、送信元ごとのメッセージ一覧、既読化、単一メッセージ全文取得(fetchMessageById)を提供。
 // - サーバー側フィルタ（q=from:... OR from:... newer_than:30d 等）に対応。
 // - Chat 側から refreshAuthHeaders(...) を呼べば、アカウント切替後も確実にそのアカウントで実行されます。
 
@@ -24,8 +24,7 @@ class GmailService {
   );
 
   // ---- Chat から受け取る認証情報（優先して使う）----
-  Map<String, String>?
-  _authHeadersOverride; // GoogleSignInAccount.authHeaders をそのまま保持
+  Map<String, String>? _authHeadersOverride; // GoogleSignInAccount.authHeaders
   String? _activeEmailOverride; // 任意：現在アカウントのメール
 
   /// Chat 側の GoogleSignIn.currentUser?.authHeaders を渡す
@@ -335,6 +334,16 @@ class GmailService {
     return null;
   }
 
+  Map<String, String> _headersToMap(List<Map<String, dynamic>> list) {
+    final map = <String, String>{};
+    for (final h in list) {
+      final name = (h['name'] ?? '').toString();
+      final value = (h['value'] ?? '').toString();
+      if (name.isNotEmpty) map[name] = value;
+    }
+    return map;
+  }
+
   // ---------------------------------------------------------------------------
   // 未読カウント（任意機能）
   // ---------------------------------------------------------------------------
@@ -547,5 +556,125 @@ class GmailService {
       );
     }
     return ids.length;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 単一メッセージの「完全取得」：本文が attachmentId に逃がされても最後まで取り切る
+  // ---------------------------------------------------------------------------
+
+  /// 本文(HTML/プレーン)・件名・宛先などをまとめて返す。本文は multipart/alternative の深い階層や
+  /// attachmentId も辿って復元する。
+  Future<Map<String, dynamic>> fetchMessageById(String messageId) async {
+    final uri = Uri.parse('$_base/messages/$messageId?format=full');
+    final res = await http.get(uri, headers: await _headers());
+    if (res.statusCode != 200) {
+      throw Exception('messages.get failed: ${res.statusCode} ${res.body}');
+    }
+
+    final data = json.decode(res.body) as Map<String, dynamic>;
+    final payload = (data['payload'] as Map<String, dynamic>?) ?? const {};
+    final headersList = (payload['headers'] as List? ?? [])
+        .cast<Map<String, dynamic>>();
+    final headersMap = _headersToMap(headersList);
+
+    final subject = headersMap['Subject'] ?? '';
+    final from = headersMap['From'] ?? '';
+    final to = headersMap['To'] ?? '';
+    final snippet = (data['snippet'] ?? '').toString();
+    final labelIds = ((data['labelIds'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+
+    final internalMs = int.tryParse('${data['internalDate'] ?? ''}');
+    final date = internalMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(internalMs, isUtc: true).toLocal()
+        : null;
+
+    String bodyHtml = '';
+    String bodyPlain = '';
+
+    // 再帰でパーツを走査（multipart の深いところまで）
+    Future<void> walk(Map<String, dynamic> part) async {
+      final mime = (part['mimeType'] ?? '').toString().toLowerCase();
+      final body = (part['body'] as Map<String, dynamic>?);
+
+      if (mime == 'text/html' || mime == 'text/plain') {
+        final decoded = await _fetchPartData(messageId, body);
+        if (decoded.isNotEmpty) {
+          if (mime == 'text/html') {
+            if (decoded.length > bodyHtml.length) bodyHtml = decoded;
+          } else {
+            if (decoded.length > bodyPlain.length) bodyPlain = decoded;
+          }
+        }
+      }
+
+      final parts =
+          (part['parts'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+      for (final p in parts) {
+        await walk(p);
+      }
+    }
+
+    if (payload.isNotEmpty) {
+      await walk(payload);
+    } else {
+      // まれにルート body に data/attachmentId が来る
+      final rootBody = data['body'] as Map<String, dynamic>?;
+      final decoded = await _fetchPartData(messageId, rootBody);
+      if (decoded.isNotEmpty) bodyPlain = decoded;
+    }
+
+    return {
+      'id': data['id'],
+      'threadId': data['threadId'],
+      'subject': subject,
+      'from': from,
+      'to': to,
+      'date': date,
+      'snippet': snippet,
+      'labelIds': labelIds,
+      'bodyHtml': bodyHtml,
+      'bodyPlain': bodyPlain,
+    };
+  }
+
+  // 添付(=本文の実体を含むことがある)の data を取得してデコード
+  Future<String> _fetchPartData(
+    String messageId,
+    Map<String, dynamic>? body,
+  ) async {
+    if (body == null) return '';
+    final inline = body['data'];
+    if (inline is String && inline.isNotEmpty) {
+      return _decodeBase64Url(inline);
+    }
+    final attId = body['attachmentId']?.toString();
+    if (attId == null || attId.isEmpty) return '';
+    final aUri = Uri.parse('$_base/messages/$messageId/attachments/$attId');
+    final aRes = await http.get(aUri, headers: await _headers());
+    if (aRes.statusCode != 200) return '';
+    final aJson = json.decode(aRes.body) as Map<String, dynamic>;
+    final data = (aJson['data'] ?? '').toString();
+    if (data.isEmpty) return '';
+    return _decodeBase64Url(data);
+  }
+
+  // Base64URL 形式（Gmailのbody.data）→ 文字列
+  String _decodeBase64Url(String input) {
+    String normalized = input.replaceAll('-', '+').replaceAll('_', '/');
+    switch (normalized.length % 4) {
+      case 2:
+        normalized += '==';
+        break;
+      case 3:
+        normalized += '=';
+        break;
+      default:
+        break;
+    }
+    final bytes = base64.decode(normalized);
+    // とりあえず UTF-8 を優先（日本語で文字化けが出る場合は後でエンコーディング判定を拡張）
+    return utf8.decode(bytes, allowMalformed: true);
   }
 }

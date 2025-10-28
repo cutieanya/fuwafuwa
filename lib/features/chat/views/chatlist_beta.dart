@@ -1,59 +1,18 @@
 // lib/features/chat/views/chat_beta_screen.dart
-//
-// 目的：指定送信元（人）ごとに、ローカルDBに同期済みのGmailデータを一覧表示。
-// - 上段：アカウント切替バー（PullDownReveal の背面）※将来複数アカウント対応用に残しつつ、今はDB駆動
-// - 下段：人ごと最新メッセージ1行＋未読バッジ（DB集計）
-// - スワイプ：一覧から非表示（UIだけ消す。DB/Gmailは変更しない）
-//
-// 必要カラム：messages.counterpart_email / is_unread / direction / internal_date / subject / snippet
-
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-// Driftの集計(count/max)を使うので、FlutterのColumnと衝突しないように hide Column
-import 'package:drift/drift.dart' hide Column;
+import 'package:drift/drift.dart' hide Column; // ← Flutter Column と衝突回避
 
-import 'package:fuwafuwa/features/chat/views/person_chat_screen.dart';
 import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
 import 'pull_down_reveal.dart';
+import 'person_chat_screen.dart';
 
-// ★ ローカルDB・リポジトリ
+// ローカルDB・リポジトリ
 import 'package:fuwafuwa/data/local_db/local_db.dart';
 import 'package:fuwafuwa/data/repositories/gmail_repository.dart';
-
-// ----------------- モデル -----------------
-
-class Chat {
-  final String threadId; // ここでは senderEmail をキーとして流用
-  final String name; // 表示名（メールアドレスをそのままでもOK）
-  final String lastMessage; // スニペット（本文冒頭）
-  final String time; // 表示用の時刻文字列（例 2025/09/19 19:11）
-  final String avatarUrl; // アバター画像URL（今はプレースホルダ）
-  final String senderEmail; // 送信元（相手）メール
-  Chat({
-    required this.threadId,
-    required this.name,
-    required this.lastMessage,
-    required this.time,
-    required this.avatarUrl,
-    required this.senderEmail,
-  });
-}
-
-class _LinkedAccount {
-  final String email;
-  final String displayName;
-  final String photoUrl;
-  const _LinkedAccount({
-    required this.email,
-    required this.displayName,
-    required this.photoUrl,
-  });
-}
-
-// -------------- 画面本体 -----------------
 
 class ChatBetaScreen extends StatefulWidget {
   const ChatBetaScreen({super.key});
@@ -62,32 +21,28 @@ class ChatBetaScreen extends StatefulWidget {
 }
 
 class _ChatBetaScreenState extends State<ChatBetaScreen> {
-  // Gmail REST（操作系で使用。一覧はDBから読む）
   final _service = GmailService();
 
-  // アカウント切替UI用（将来の複数アカウント対応に継続使用）
   final GoogleSignIn _gsi = GoogleSignIn(
     scopes: const [
       'email',
       'profile',
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/gmail.send',
     ],
   );
 
-  // ------ レイアウト調整系 ------
   static const double _kTrailingWidth = 96.0;
 
-  // ------ 画面状態 ------
-  String? _activeAccountEmail; // null = All（現状は単一アカウント想定でも保持）
+  String? _activeAccountEmail; // null = All
   bool _isEditMode = false;
   final Set<String> _selectedThreadIds = {}; // ここでは senderEmail を入れる
 
-  final Map<String, DateTime?> _hiddenSnapshotByThread = {}; // 非表示スナップショット
-  final Map<String, Chat> _lastChatById = {};
+  final Map<String, DateTime?> _hiddenSnapshotByThread = {};
+  final Map<String, _Chat> _lastChatById = {};
   final Map<String, DateTime?> _lastTimeByThread = {};
 
-  // ------ 取得キャッシュ（不要な再ロード抑制） ------
   Future<List<Map<String, dynamic>>>? _chatsFuture;
   String _chatsFutureKey = '';
   Future<Map<String, int>>? _unreadFuture;
@@ -115,13 +70,10 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     _unreadFutureKey = '';
   }
 
-  // ---------- 起動時：サイレントサインイン ----------
   @override
   void initState() {
     super.initState();
     _bootstrapSignIn();
-
-    // 起動時の一時修復：counterpart_email を from で埋める（冪等）
     _fixCounterpartEmail();
   }
 
@@ -132,9 +84,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       _activeAccountEmail = acc?.email.toLowerCase();
       await _refreshServiceAuth();
       setState(() {});
-    } catch (_) {
-      // no-op
-    }
+    } catch (_) {}
   }
 
   Future<void> _refreshServiceAuth() async {
@@ -143,12 +93,9 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       if (headers != null) {
         await _service.refreshAuthHeaders(headers);
       }
-    } catch (_) {
-      /* ignore */
-    }
+    } catch (_) {}
   }
 
-  // ---------- Firestore パス ----------
   DocumentReference<Map<String, dynamic>> get _filtersDoc {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) throw StateError('未ログインです。ログイン後に再度お試しください。');
@@ -169,7 +116,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         .doc('accounts');
   }
 
-  // ---------- Filters（表示対象送信元の管理） ----------
   Stream<Set<String>> _streamAllowedSenders() {
     return _filtersDoc.snapshots().map((snap) {
       final list =
@@ -201,7 +147,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }, SetOptions(merge: true));
   }
 
-  // ---------- Linked Accounts（UI用） ----------
   Stream<List<_LinkedAccount>> _streamLinkedAccounts() {
     return _accountsDoc.snapshots().map((snap) {
       final raw = (snap.data()?['linked'] as List?) ?? const [];
@@ -249,7 +194,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
 
   Future<void> _switchToAccount(String? email) async {
     setState(() {
-      _activeAccountEmail = email; // null = All
+      _activeAccountEmail = email;
       _isEditMode = false;
       _selectedThreadIds.clear();
       _chatsFutureKey = '';
@@ -272,12 +217,11 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     await _refreshServiceAuth();
   }
 
-  // ---------- DBから人ごと最新一覧を取得 ----------
+  // ---------- DB ----------
   Future<List<Map<String, dynamic>>> _loadChatsForDb() async {
     final db = LocalDb.instance;
     final m = db.messages;
 
-    // counterpart_email ごとに最新日時を取り、その行の subject/snippet をざっくり拾う
     final maxDt = m.internalDate.max();
 
     final q = db.selectOnly(m)
@@ -313,16 +257,12 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     final list = await _loadChatsForDb();
     if (allowedSenders.isEmpty) return list;
     final setLower = allowedSenders.map((e) => e.toLowerCase()).toSet();
-    return list
-        .where(
-          (m) =>
-              (m['fromEmail'] as String?)?.toLowerCase() != null &&
-              setLower.contains((m['fromEmail'] as String).toLowerCase()),
-        )
-        .toList();
+    return list.where((m) {
+      final fe = (m['fromEmail'] as String?)?.toLowerCase();
+      return fe != null && setLower.contains(fe);
+    }).toList();
   }
 
-  // ---------- DBから未読数を集計 ----------
   Future<Map<String, int>> _loadUnreadCounts(Set<String> _senders) async {
     final db = LocalDb.instance;
     final m = db.messages;
@@ -349,7 +289,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     return map;
   }
 
-  // ---------- UIユーティリティ ----------
+  // ---------- ユーティリティ ----------
   String? _extractEmail(String raw) {
     final m = RegExp(
       r'([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,})',
@@ -357,14 +297,14 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     return m?.group(1)?.toLowerCase();
   }
 
-  Chat _mapToChat(Map<String, dynamic> m) {
+  _Chat _mapToChat(Map<String, dynamic> m) {
     final email = (m['fromEmail'] ?? '') as String;
     final name = email.isEmpty ? '(unknown)' : email;
     final lastMessage = (m['snippet'] ?? m['subject'] ?? '(No message)')
         .toString();
     final time = (m['time'] ?? '').toString();
     const avatar = 'https://placehold.jp/150x150.png';
-    return Chat(
+    return _Chat(
       threadId: email,
       name: name,
       lastMessage: lastMessage,
@@ -397,7 +337,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     );
   }
 
-  // ---------- 編集モード ----------
   void _toggleEditMode() {
     setState(() {
       _isEditMode = !_isEditMode;
@@ -405,17 +344,13 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     });
   }
 
-  // ====== 非表示（隠す） ======
   Future<void> _deleteSelectedFromView() async {
     for (final tid in _selectedThreadIds) {
       _hiddenSnapshotByThread[tid] = _lastTimeByThread[tid];
     }
-    setState(() {
-      _selectedThreadIds.clear();
-    });
+    setState(() => _selectedThreadIds.clear());
   }
 
-  // 1件だけ一覧から非表示にする（スワイプ用）
   void _hideOne(String threadId) {
     _hiddenSnapshotByThread[threadId] = _lastTimeByThread[threadId];
     setState(() {});
@@ -425,15 +360,12 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     ).showSnackBar(const SnackBar(content: Text('一覧から非表示にしました')));
   }
 
-  // ====== ローカルDB削除 ======
   Future<void> _deleteLocalBySender(String email) async {
     final e = email.toLowerCase();
-    // messages から削除
     await LocalDb.instance.customStatement(
       'DELETE FROM messages WHERE LOWER(counterpart_email) = ?;',
       [e],
     );
-    // 参照が無くなった threads を掃除
     await LocalDb.instance.customStatement(
       'DELETE FROM threads WHERE id NOT IN (SELECT DISTINCT thread_id FROM messages);',
     );
@@ -447,7 +379,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     _invalidateUnreadCache();
     setState(() {
       _selectedThreadIds.clear();
-      _chatsFutureKey = ''; // 再読込
+      _chatsFutureKey = '';
       _unreadFutureKey = '';
     });
     if (!mounted) return;
@@ -456,33 +388,27 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     ).showSnackBar(const SnackBar(content: Text('ローカルDBから削除しました')));
   }
 
-  // ====== 一括既読（編集バーのボタンからのみ。スワイプは非表示動作） ======
   Future<void> _markSelectedRead() async {
     if (_selectedThreadIds.isEmpty) return;
 
-    // 1) Gmail APIで一括既読（送信元単位）
     for (final email in _selectedThreadIds) {
       final q = 'from:${email.toLowerCase()} is:unread';
       await _service.markReadByQuery(q);
     }
 
-    // 2) DB も既読にしてUI即時反映
     final db = LocalDb.instance;
     for (final email in _selectedThreadIds) {
       await (db.update(db.messages)
             ..where((m) => m.counterpartEmail.equals(email))
-            ..where((m) => m.direction.equals(1)) // 受信のみ
+            ..where((m) => m.direction.equals(1))
             ..where((m) => m.isUnread.equals(true)))
           .write(const MessagesCompanion(isUnread: Value(false)));
     }
 
     _invalidateUnreadCache();
-    setState(() {
-      _selectedThreadIds.clear();
-    });
+    setState(() => _selectedThreadIds.clear());
   }
 
-  // ---------- デバッグ/修復 ----------
   Future<void> _debugPrintMessagesCount() async {
     final db = LocalDb.instance;
     final m = db.messages;
@@ -500,7 +426,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     }
   }
 
-  // counterpart_email を from で埋める（冪等）
   Future<void> _fixCounterpartEmail() async {
     await LocalDb.instance.customStatement('''
       UPDATE messages
@@ -511,7 +436,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     debugPrint('✅ counterpart_email updated (no direction filter)');
   }
 
-  // ダミー a@x 行を安全に削除（パラメータバインド）
   Future<void> _wipeDummyMessages({String needle = 'a@x'}) async {
     final n = needle.toLowerCase();
     await LocalDb.instance.customStatement(
@@ -525,7 +449,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     debugPrint('✅ wiped dummy messages for $n');
   }
 
-  // Firestoreの allowedSenders をクエリに埋めてバックフィル
   Future<void> _syncAllowedSendersInbox() async {
     try {
       final allowed = await _streamAllowedSenders().first;
@@ -539,7 +462,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
         return;
       }
 
-      // Gmail検索クエリを構築：in:inbox newer_than:30d (from:a OR from:b)
       final parts = allowed.map((e) => 'from:${e.toLowerCase()}').join(' OR ');
       final query = 'in:inbox newer_than:30d ($parts)';
       debugPrint('fetchThreads query = $query');
@@ -547,12 +469,10 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       final repo = GmailRepositoryHttp(db: LocalDb.instance, svc: _service);
       await repo.backfillInbox(query: query, limit: 200);
 
-      // DBの状態を軽く出しておく
       await _diagAll();
       await _debugPrintMessagesCount();
 
       if (!mounted) return;
-      // ★ ここで出していた「同期が完了しました」の SnackBar を削除
       setState(() {
         _chatsFutureKey = '';
         _unreadFutureKey = '';
@@ -566,7 +486,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   }
 
   Future<void> _diagAll() async {
-    // 方向カウント
     final rowsDir = await LocalDb.instance
         .customSelect(
           'SELECT direction, COUNT(*) AS c FROM messages GROUP BY direction;',
@@ -577,7 +496,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       debugPrint('direction=${r.data['direction']} : ${r.data['c']}');
     }
 
-    // NULL フィールド
     final rowsNull = await LocalDb.instance.customSelect('''
       SELECT
         SUM(CASE WHEN "from" IS NULL THEN 1 ELSE 0 END) AS null_from,
@@ -590,7 +508,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       'from IS NULL: ${rn['null_from']}, counterpart_email IS NULL: ${rn['null_counter']}',
     );
 
-    // 先頭20件
     final rowsPeek = await LocalDb.instance.customSelect('''
       SELECT id, direction, "from", counterpart_email, internal_date
       FROM messages
@@ -602,7 +519,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
       debugPrint(r.data.toString());
     }
 
-    // DB 内に存在する counterpart_email の一覧
     final rowsList = await LocalDb.instance.customSelect('''
       SELECT LOWER(counterpart_email) AS ce
       FROM messages
@@ -614,7 +530,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     debugPrint('DB counterpart emails: $emails');
   }
 
-  // ---------- ビルド ----------
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).padding.bottom;
@@ -642,7 +557,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                       controller: scroll,
                       physics: const BouncingScrollPhysics(),
                       slivers: [
-                        // Header
                         SliverToBoxAdapter(
                           child: SafeArea(
                             bottom: false,
@@ -658,7 +572,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                     ),
                                   ),
                                   const Spacer(),
-                                  // ★ デバッグボタン群
                                   IconButton(
                                     icon: const Icon(Icons.cleaning_services),
                                     color: Colors.black,
@@ -687,7 +600,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                       await _debugPrintMessagesCount();
                                     },
                                   ),
-                                  // 既存の編集トグル
                                   InkWell(
                                     onTap: _toggleEditMode,
                                     customBorder: const CircleBorder(),
@@ -727,14 +639,14 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                           ),
                         ),
 
-                        // ダミーの検索ボタン
+                        // ダミー検索
                         SliverToBoxAdapter(
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
                             child: SizedBox(
                               height: 44,
                               child: OutlinedButton.icon(
-                                onPressed: () {}, // TODO
+                                onPressed: () {},
                                 icon: const Icon(Icons.search),
                                 label: const Text('Search'),
                                 style: OutlinedButton.styleFrom(
@@ -752,7 +664,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                           ),
                         ),
 
-                        // リスト本体
                         StreamBuilder<List<_LinkedAccount>>(
                           stream: _streamLinkedAccounts(),
                           builder: (context, accSnap) {
@@ -809,7 +720,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                     _lastChatById.clear();
                                     _lastTimeByThread.clear();
 
-                                    // 非表示対象を除外
                                     final visibleRaw = <Map<String, dynamic>>[];
                                     for (final m in chatsRaw) {
                                       final id =
@@ -1004,11 +914,9 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                                         }
                                                       });
                                                     }
-                                                  : () {
-                                                      if (chat
-                                                          .senderEmail
-                                                          .isEmpty)
-                                                        return;
+                                                  : () async {
+                                                      // 個人チャット画面へ遷移
+                                                      if (!mounted) return;
                                                       Navigator.push(
                                                         context,
                                                         MaterialPageRoute(
@@ -1035,7 +943,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                               );
                                             }
 
-                                            // 通常時はスワイプで「一覧から非表示」
                                             return Padding(
                                               padding:
                                                   const EdgeInsets.symmetric(
@@ -1075,7 +982,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                           },
                         ),
 
-                        // 下部タブ分の余白
                         SliverToBoxAdapter(
                           child: SizedBox(height: bottomPad + 72),
                         ),
@@ -1087,7 +993,7 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
             ],
           ),
 
-          // ===== 画面下の編集アクションバー =====
+          // 編集アクションバー
           Positioned(
             left: 0,
             right: 0,
@@ -1121,7 +1027,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                       ),
                       child: Row(
                         children: [
-                          // 削除アクション（選択式メニュー表示）
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
@@ -1139,8 +1044,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                               onPressed: _selectedThreadIds.isEmpty
                                   ? null
                                   : () async {
-                                      // 選択肢ボトムシート
-                                      if (!mounted) return;
                                       final action =
                                           await showModalBottomSheet<
                                             _DeleteAction
@@ -1175,7 +1078,6 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          // 一括既読（DB/Gmailを更新）
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
@@ -1232,7 +1134,24 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   }
 }
 
-// ----------------- サブ部品：削除メニュー -----------------
+// ====== private models & widgets ======
+class _Chat {
+  final String threadId;
+  final String name;
+  final String lastMessage;
+  final String time;
+  final String avatarUrl;
+  final String senderEmail;
+
+  _Chat({
+    required this.threadId,
+    required this.name,
+    required this.lastMessage,
+    required this.time,
+    required this.avatarUrl,
+    required this.senderEmail,
+  });
+}
 
 enum _DeleteAction { hide, local }
 
@@ -1270,7 +1189,16 @@ class _DeleteMenu extends StatelessWidget {
   }
 }
 
-// ----------------- サブウィジェット（アカウント切替バー） -----------------
+class _LinkedAccount {
+  final String email;
+  final String displayName;
+  final String photoUrl;
+  const _LinkedAccount({
+    required this.email,
+    required this.displayName,
+    required this.photoUrl,
+  });
+}
 
 class _AllButton extends StatelessWidget {
   final bool selected;

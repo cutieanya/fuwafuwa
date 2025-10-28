@@ -1,7 +1,7 @@
 // lib/ui/home_page.dart
 import 'package:flutter/material.dart';
 import '../data/local_db/local_db.dart';
-import 'package:fuwafuwa/data/ repositories/gmail_repository.dart';
+import 'package:fuwafuwa/data/repositories/gmail_repository.dart';
 import 'package:fuwafuwa/features/chat/services/gmail_service.dart';
 import 'thread_page.dart';
 

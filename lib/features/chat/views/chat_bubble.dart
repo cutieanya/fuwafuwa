@@ -33,10 +33,9 @@ class ChatBubble extends StatelessWidget {
     final fg = isMe ? cs.onPrimary : cs.onSurface;
 
     // 時刻などのメタ情報
-    final metaStyle = Theme.of(context)
-        .textTheme
-        .labelSmall!
-        .copyWith(color: cs.outline, height: 1.1);
+    final metaStyle = Theme.of(
+      context,
+    ).textTheme.labelSmall!.copyWith(color: cs.outline, height: 1.1);
 
     // 横幅は画面の70%まで（長文で伸びすぎないように）
     final maxW = MediaQuery.of(context).size.width * 0.7;
@@ -56,21 +55,22 @@ class ChatBubble extends StatelessWidget {
           // 送信側だけほんのり影（立体感）
           boxShadow: isMe
               ? [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ]
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
               : null,
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: DefaultTextStyle(
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium!
-                .copyWith(color: fg, height: 1.3, letterSpacing: -0.1),
+            style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+              color: fg,
+              height: 1.3,
+              letterSpacing: -0.1,
+            ),
             child: Text(text),
           ),
         ),
@@ -89,14 +89,15 @@ class ChatBubble extends StatelessWidget {
     //  - compactBelow: 直後が同分連投なら下を詰める
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        isMe ? 48 : 12,                      // 左（相手側は広めに空ける）
-        compact ? 1 : 6,                     // 上：連投時は1px、通常は6px
-        isMe ? 12 : 48,                      // 右
+        isMe ? 48 : 12, // 左（相手側は広めに空ける）
+        compact ? 1 : 6, // 上：連投時は1px、通常は6px
+        isMe ? 12 : 48, // 右
         showTime ? 4 : (compactBelow ? 1 : 4), // 下：時刻が無ければ連投時だけ詰める
       ),
       child: Column(
-        crossAxisAlignment:
-        isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isMe
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           row,
           if (showTime) ...[
