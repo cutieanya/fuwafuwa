@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'chatlist_beta.dart';
 import 'package:fuwafuwa/features/home/views/home_screen.dart';
+import 'package:fuwafuwa/features/user/profile_screen.dart'; // 追加
 
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
@@ -17,7 +18,7 @@ class _RootShellState extends State<RootShell> {
   final _pages = const [
     HomeScreen(),
     ChatBetaScreen(), // ← あなたのPullDownReveal画面
-    _ProfileScreen(),
+    ProfileScreen(), // ← 置き換え
   ];
 
   @override
@@ -45,34 +46,12 @@ class _RootShellState extends State<RootShell> {
           ),
         ],
         onTap: (i) => setState(() => _index = i),
-        color: Colors.black, // バー色
-        buttonBackgroundColor: Colors.white, // 選択されたアイコンの背景色（白）
-        backgroundColor: Colors.white, // 背景は透過
+        color: Colors.black, // バー色（黒）
+        buttonBackgroundColor: Colors.white, // 選択アイコンの背景（白）
+        backgroundColor: Colors.white, // 背景（白）
         animationCurve: Curves.easeInOut,
         animationDuration: const Duration(milliseconds: 260),
       ),
     );
   }
-}
-
-class _ProfileScreen extends StatelessWidget {
-  const _ProfileScreen();
-  @override
-  Widget build(BuildContext context) => const Scaffold(
-    body: Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.person, size: 64, color: Colors.grey),
-          SizedBox(height: 16),
-          Text(
-            'プロフィール画面',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 8),
-          Text('ここにプロフィール画面の内容を追加できます'),
-        ],
-      ),
-    ),
-  );
 }

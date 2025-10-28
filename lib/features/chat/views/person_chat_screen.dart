@@ -32,7 +32,9 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
     ],
   );
   final _sendSvc = GmailSendService();
-  final _quickCtrl = TextEditingController();
+
+  final _subjectCtrl = TextEditingController(); // ← 件名
+  final _quickCtrl = TextEditingController(); // ← 本文
   bool _sendingQuick = false;
 
   Future<List<Map<String, dynamic>>> _loadMessages() async {
@@ -78,6 +80,7 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
 
   @override
   void dispose() {
+    _subjectCtrl.dispose();
     _quickCtrl.dispose();
     super.dispose();
   }
@@ -102,8 +105,17 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
   }
 
   Future<void> _sendQuick() async {
+    final subject = _subjectCtrl.text.trim();
     final body = _quickCtrl.text.trim();
-    if (body.isEmpty) return;
+
+    // 件名・本文どちらかは必須（両方空は送らない）
+    if (subject.isEmpty && body.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('件名またはメッセージを入力してください')));
+      return;
+    }
 
     setState(() => _sendingQuick = true);
     try {
@@ -113,13 +125,14 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
       final raw = _sendSvc.buildMimeMessage(
         to: widget.senderEmail,
         from: from,
-        subject: '',
-        textBody: body,
+        subject: subject,
+        textBody: body.isEmpty ? '(本文なし)' : body,
       );
 
       await _sendSvc.sendEmail(authHeaders: headers, rawMessage: raw);
 
       if (!mounted) return;
+      _subjectCtrl.clear();
       _quickCtrl.clear();
       FocusScope.of(context).unfocus();
       ScaffoldMessenger.of(
@@ -145,6 +158,7 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
         builder: (_) => ComposeEmailScreen(
           initialTo: widget.senderEmail,
           initialFrom: from,
+          // ※ ComposeEmailScreen に initialSubject / initialBody が無いので渡さない
           authHeaders: headers,
           sendSvc: _sendSvc,
         ),
@@ -278,7 +292,7 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
             ),
           ),
 
-          // クイック送信欄
+          // クイック送信欄（件名＋本文）
           SafeArea(
             top: false,
             child: Container(
@@ -288,6 +302,7 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
                 border: Border(top: BorderSide(color: Colors.black12)),
               ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   IconButton(
                     icon: const Icon(Icons.open_in_full),
@@ -295,33 +310,93 @@ class _PersonChatScreenState extends State<PersonChatScreen> {
                     onPressed: _openComposer,
                   ),
                   const SizedBox(width: 4),
+                  // 入力エリア（縦に「件名」「メッセージ」）
                   Expanded(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 160),
-                      child: TextField(
-                        controller: _quickCtrl,
-                        maxLines: null,
-                        minLines: 1,
-                        decoration: InputDecoration(
-                          hintText: 'メッセージを入力',
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey.shade100,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            borderSide: const BorderSide(
-                              color: Colors.transparent,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 件名
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '件名：',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            borderSide: BorderSide(color: Colors.grey.shade400),
+                        ),
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: _subjectCtrl,
+                          textInputAction: TextInputAction.next,
+                          decoration: InputDecoration(
+                            hintText: '件名を入力',
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey.shade100,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(
+                                color: Colors.transparent,
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: Colors.grey.shade400,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 8),
+                        // メッセージ
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'メッセージ：',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 160),
+                          child: TextField(
+                            controller: _quickCtrl,
+                            maxLines: null,
+                            minLines: 1,
+                            decoration: InputDecoration(
+                              hintText: 'メッセージを入力',
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.shade100,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: const BorderSide(
+                                  color: Colors.transparent,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide(
+                                  color: Colors.grey.shade400,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
