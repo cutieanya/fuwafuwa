@@ -1,4 +1,6 @@
-// lib/features/chat/views/chat_beta_screen.dart
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kReleaseMode;
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -48,6 +50,9 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
   Future<Map<String, int>>? _unreadFuture;
   String _unreadFutureKey = '';
 
+  // 自動同期タイマー（起動直後＋1分ごと）
+  Timer? _autoSyncTimer;
+
   String _sendersKey(Set<String> s) {
     final l = s.toList()..sort();
     return l.join(',');
@@ -75,6 +80,23 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
     super.initState();
     _bootstrapSignIn();
     _fixCounterpartEmail();
+    _startAutoSync(); // ← 自動同期開始（起動直後＋1分ごと）
+  }
+
+  @override
+  void dispose() {
+    _autoSyncTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoSync() {
+    // 起動直後に1回同期
+    _syncAllowedSendersInbox();
+    // 以降は1分ごとに同期（アプリを開いている間）
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = Timer.periodic(const Duration(minutes: 1), (_) async {
+      await _syncAllowedSendersInbox();
+    });
   }
 
   Future<void> _bootstrapSignIn() async {
@@ -572,34 +594,39 @@ class _ChatBetaScreenState extends State<ChatBetaScreen> {
                                     ),
                                   ),
                                   const Spacer(),
-                                  IconButton(
-                                    icon: const Icon(Icons.cleaning_services),
-                                    color: Colors.black,
-                                    tooltip: 'ダミー a@x を削除',
-                                    onPressed: () async {
-                                      await _wipeDummyMessages(needle: 'a@x');
-                                      await _diagAll();
-                                      await _debugPrintMessagesCount();
-                                      setState(() {});
-                                    },
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.sync),
-                                    color: Colors.black,
-                                    tooltip: 'allowedSenders を同期',
-                                    onPressed: () async {
-                                      await _syncAllowedSendersInbox();
-                                    },
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.rule),
-                                    color: Colors.black,
-                                    tooltip: 'DB 状態ダンプ',
-                                    onPressed: () async {
-                                      await _diagAll();
-                                      await _debugPrintMessagesCount();
-                                    },
-                                  ),
+
+                                  // デバッグボタンは本番(release)では非表示
+                                  if (!kReleaseMode) ...[
+                                    IconButton(
+                                      icon: const Icon(Icons.cleaning_services),
+                                      color: Colors.black,
+                                      tooltip: 'ダミー a@x を削除',
+                                      onPressed: () async {
+                                        await _wipeDummyMessages(needle: 'a@x');
+                                        await _diagAll();
+                                        await _debugPrintMessagesCount();
+                                        setState(() {});
+                                      },
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.sync),
+                                      color: Colors.black,
+                                      tooltip: 'allowedSenders を同期',
+                                      onPressed: () async {
+                                        await _syncAllowedSendersInbox();
+                                      },
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.rule),
+                                      color: Colors.black,
+                                      tooltip: 'DB 状態ダンプ',
+                                      onPressed: () async {
+                                        await _diagAll();
+                                        await _debugPrintMessagesCount();
+                                      },
+                                    ),
+                                  ],
+
                                   InkWell(
                                     onTap: _toggleEditMode,
                                     customBorder: const CircleBorder(),
