@@ -111,10 +111,13 @@ flutter run
 ---
 
 ## 👥 開発チーム
-| メンバー | 担当 |
-|-----------|------|
-| Miki Nakata | UI設計 / Gmail API連携 / Drift DB実装 / 同期ロジック |
-| Team Members | Firestore設計 / デザイン / 通知処理など |
+| メンバー |
+|-----------|
+| Miki Nakata | 
+| Konoha Moriko |
+| Honoka Kataoka | 
+| Suzuka Monden | 
+
 
 ---
 
